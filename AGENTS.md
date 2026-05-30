@@ -29,6 +29,11 @@ This repository uses Ralph Harness for agent-first work.
 4. Do not start implementation until the sprint contract is approved.
 5. A single failed acceptance criterion fails the sprint.
 6. Preserve user changes you did not make.
+7. Write BDD behavior scenarios before acceptance criteria in specs and sprint contracts.
+8. Use TDD selectively for core deterministic logic, and record the tradeoff when strict TDD is skipped.
+9. Verify final runnable behavior with E2E or runtime checks whenever practical.
+10. Keep implementations modular, cohesive, low-coupled, and readable; tests should help explain AI-generated behavior.
+11. Pause at meaningful manual-validation milestones with local commands and what the developer should inspect.
 
 ## Repository Map
 

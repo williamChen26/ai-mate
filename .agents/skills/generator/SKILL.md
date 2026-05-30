@@ -6,7 +6,7 @@ user_invocable: true
 
 # /generator — Sprint Generator
 
-Operates in two modes: **contract proposal** or **implementation**.
+Operates in two modes: **contract proposal** or **implementation**. Contracts are BDD-first, implementation uses selective TDD, and every runnable final behavior needs E2E or runtime verification.
 
 ## Usage
 
@@ -36,7 +36,7 @@ From `meta.json`, count completed sprints + 1. Create `sprints/sprint-<N>/` dire
 Spawn Generator agent with the preferred coding model, with:
 - Agent instructions from `.claude/agents/generator.md` (Mode 1 section)
 - Gathered context
-- Instruction to write `sprints/sprint-<N>/contract.md`
+- Instruction to write `sprints/sprint-<N>/contract.md` with behavior scenarios, TDD Decision, E2E/runtime plan, modularity/readability plan, and Human Checkpoint recommendation
 
 ### Step 5: Update Meta
 
@@ -86,7 +86,7 @@ If `"approved"` → round 1. If `"revising"` → increment round.
 Spawn Generator agent with the preferred coding model, with:
 - Agent instructions from `.claude/agents/generator.md` (Mode 2 section)
 - Gathered context
-- Instruction to: write tests first → implement → self-evaluate → write `build-log.md`
+- Instruction to: follow the TDD Decision → implement modularly → run E2E/runtime checks where runnable → self-evaluate → write `build-log.md`
 
 ### Step 5: Update Meta
 
@@ -103,4 +103,26 @@ After completion: `status → "evaluating"`
 
 ### Step 6: Report
 
-Show build summary from `build-log.md`. Prompt: "Run `/evaluator sprint <run-id>` to evaluate."
+Show build summary from `build-log.md`. If the sprint produced a runnable/manual-validation milestone, include the exact local commands and what the developer should inspect before continuing. Prompt: "Run `/evaluator sprint <run-id>` to evaluate."
+
+## Required Artifact Sections
+
+### contract.md additions
+
+Every sprint contract must include these sections before `Technical Approach`:
+
+- `Behavior Scenarios`: carry over or refine the spec scenarios. Use Given/When/Then for user-visible behavior; for internal modules, state the precondition, operation, and observable result.
+- `TDD Decision`: say whether TDD will be used. Use TDD for core deterministic logic such as parsing, state transitions, permissions, validation, ranking, scheduling, protocol mapping, pricing/calculation rules, and data transformations. TDD may be skipped for documentation, prompt copy, mechanical wiring, simple styling, one-off configuration, or exploratory UI layout when the tradeoff is recorded.
+- `E2E / Runtime Verification`: name the executable final-behavior check, such as an E2E command, browser scenario, spawned process, CLI invocation, or runtime smoke test. If true E2E is impractical, explain the fallback.
+- `Modularity & Readability Plan`: describe cohesive module boundaries, files likely to change, how oversized low-cohesion or tight-coupling problems will be avoided, and where comments/tests should explain non-obvious behavior.
+- `Human Checkpoint`: say whether this sprint should pause for manual validation. If yes, list local commands and what the developer should inspect.
+
+### build-log.md additions
+
+Every build log must include:
+
+- `Behavior Scenario Evidence`: map each scenario to a test, E2E/runtime check, or manual observation.
+- `TDD Decision & Evidence`: record RED/GREEN/REFACTOR evidence when TDD was selected, or the substitute focused validation and tradeoff when TDD was skipped.
+- `E2E / Runtime Verification`: command or scenario executed, result, and fallback rationale if needed.
+- `Modularity & Readability Notes`: module boundaries, extracted helpers, large-file risks avoided or justified, useful comments, and tests that act as documentation.
+- `Human Checkpoint`: whether to pause, exact local commands, and what behavior or architecture to inspect.

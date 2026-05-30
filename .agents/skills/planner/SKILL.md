@@ -6,7 +6,7 @@ user_invocable: true
 
 # /planner — Harness Planner
 
-Expand a user requirement into a big picture spec that Generator and Evaluator will execute sprint by sprint.
+Expand a user requirement into a big picture spec that Generator and Evaluator will execute sprint by sprint. Requirements are BDD-first: each feature needs behavior scenarios before acceptance criteria.
 
 ## Protocol
 
@@ -46,7 +46,7 @@ Spawn Planner agent with the strongest available planning model, with:
 - Agent instructions from `.claude/agents/planner.md`
 - Gathered context
 - Run directory path
-- Instruction to write `spec.md`
+- Instruction to write `spec.md` with `Behavior Scenarios` before acceptance criteria for every feature
 
 ### Step 4: Extract Feature List
 
@@ -69,8 +69,11 @@ Set `status → "sprinting"`, `updated_at`.
 Tell the user:
 - Run ID and directory path
 - Plan summary
+- Behavior scenario themes
 - Feature list with priorities
 - Suggested sprint order
 - Open questions
 
 Prompt: "Run `/harness <run-id>` to start sprinting, or review the spec first at `docs/exec-plans/active/<run-id>/spec.md`"
+
+This report is a Human Checkpoint. Do not start implementation until the user has had a chance to review the behavior scenarios and feature order.

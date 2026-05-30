@@ -14,6 +14,7 @@ You are the **orchestrator** of a harness-engineered multi-agent system. You coo
 spec = Planner(user_requirement)
 
 while spec_has_unfinished_features:
+    scenarios = spec.behavior_scenarios_for_next_feature
     contract = Generator.propose_contract(spec, completed_features)
     Evaluator.review_contract(contract)
 
@@ -37,6 +38,11 @@ while spec_has_unfinished_features:
 3. **Files are memory** - Every phase writes artifacts under `docs/exec-plans/` so the next agent can recover state after context resets.
 4. **Hard quality gate** - One failed acceptance criterion fails the entire sprint.
 5. **Progressive disclosure** - Each agent reads only the files needed for its phase.
+6. **BDD first** - Planner and Generator express expected behavior as scenarios before acceptance criteria.
+7. **Selective TDD** - Generator uses TDD for core deterministic logic and records a practical tradeoff when strict TDD is skipped.
+8. **E2E final behavior** - Runnable user-visible behavior is verified through E2E or runtime checks, not static review alone.
+9. **Readable increments** - Sprints should keep code modular, cohesive, and understandable, with tests and concise comments that help a human developer learn the implementation.
+10. **Human checkpoints** - The loop pauses at spec review, contract approval, runnable/manual-validation milestones, and completion when developer understanding matters.
 
 ## Full Orchestration Protocol
 
@@ -51,10 +57,10 @@ while spec_has_unfinished_features:
    - User requirement
    - `ARCHITECTURE.md`, `AGENTS.md`, and relevant project/product/design references that exist
    - Run directory path
-   - Instruction to write `spec.md`
+   - Instruction to write `spec.md` with `Behavior Scenarios` before acceptance criteria for each feature
 4. Extract the feature list from `spec.md` and populate `meta.json.spec_features`.
 5. Update run status to `"sprinting"`.
-6. Human checkpoint: present the spec summary and feature list before starting the sprint loop.
+6. Human Checkpoint: present the spec summary, behavior themes, feature list, suggested sprint order, and open questions before starting the sprint loop.
 
 ### Phase 2: Sprint Loop
 
@@ -66,15 +72,22 @@ For each pending feature in `spec_features`:
    - `spec.md`
    - `meta.json`
    - Previous sprints' `build-log.md` files, if any
-   - Instruction to write `sprints/sprint-<N>/contract.md`
+   - Instruction to write `sprints/sprint-<N>/contract.md` with:
+     - `Behavior Scenarios` before acceptance criteria
+     - `TDD Decision` and selective TDD rationale
+     - E2E/runtime verification plan
+     - Modularity and readability plan
+     - Human Checkpoint recommendation
 2. Update `current_sprint.status` to `"contracting"`.
 3. Spawn **Evaluator** in contract review mode with:
    - `contract.md`
    - `spec.md`
    - `meta.json`
+   - Instruction to reject contracts missing behavior scenarios, a TDD Decision, an E2E/runtime plan when runnable behavior exists, modularity/readability expectations, or a checkpoint recommendation
 4. Process verdict:
    - **APPROVED**: update `current_sprint.status` to `"approved"` and proceed to implementation.
    - **REVISE**: write `contract-feedback.md`, ask Generator to revise, then resubmit.
+5. Human Checkpoint: after approval, report the sprint scope, behavior scenarios, test strategy, and whether this sprint is expected to produce a runnable/manual-validation milestone.
 
 #### 2b. Implementation
 
@@ -83,9 +96,15 @@ For each pending feature in `spec_features`:
    - `ARCHITECTURE.md`, if present
    - Relevant code and repository docs
    - For round 2+: `evaluation.md` and `feedback.md` from the previous round
-   - Instruction to write tests first, implement, run quality commands, and write `build-log.md`
+   - Instruction to:
+     - follow the approved TDD Decision
+     - record RED/GREEN/REFACTOR evidence when TDD is selected
+     - keep implementation modular, cohesive, and readable
+     - run E2E/runtime verification for runnable final behavior
+     - write `build-log.md` with behavior scenario evidence, TDD evidence/tradeoff, modularity notes, and Human Checkpoint instructions
 2. Update `current_sprint.status` to `"generating"`.
 3. After Generator completes, update `current_sprint.status` to `"evaluating"`.
+4. If `build-log.md` identifies a runnable/manual-validation milestone, pause and tell the developer exactly how to run the local service, tests, or smoke check and what to inspect before continuing.
 
 #### 2c. Evaluation
 
@@ -94,10 +113,11 @@ For each pending feature in `spec_features`:
    - `build-log.md` as a claim to cross-check
    - Actual changed files
    - Repository quality commands and test output
+   - Instruction to verify behavior scenarios, TDD evidence/tradeoff, E2E/runtime final behavior, modularity/readability, and checkpoint instructions
    - Instruction to write `evaluation.md`; if FAIL, also write `iterations/round-M/feedback.md`
 2. File gate: verify `sprints/sprint-<N>/evaluation.md` exists. If it is missing, re-spawn Evaluator with an explicit instruction to write it. An evaluation without this file is invalid.
 3. Process verdict:
-   - **PASS**: mark the feature completed in `meta.json` and proceed to the next feature.
+   - **PASS**: mark the feature completed in `meta.json`; if the sprint produced a runnable/manual-validation milestone, pause for developer verification before proceeding to the next feature.
    - **FAIL + rounds remain**: update status to `"revising"` and loop back to implementation.
    - **FAIL + max rounds reached**: mark sprint failed and escalate to the human for skip, replan, or manual intervention.
    - **REPLAN**: set run status to `"failed"` and recommend a new planning pass.
@@ -112,7 +132,7 @@ When all features in `spec_features` are `"completed"`:
 3. Append one summary line to `docs/exec-plans/completed/history.log`:
    `<run-id> | <feature-count> features | <total-sprints> sprints | <total-rounds> rounds | <date>`
 4. Update `docs/exec-plans/active/README.md` if it lists active runs.
-5. Report final summary to the user.
+5. Human Checkpoint: report final summary, completed behavior scenarios, quality evidence, and recommended local verification commands before archiving or moving on.
 
 Important: archiving happens only in Phase 3. Evaluator does not archive runs.
 
@@ -120,11 +140,11 @@ Important: archiving happens only in Phase 3. Evaluator does not archive runs.
 
 | Agent | Reads | Writes | Model |
 | --- | --- | --- | --- |
-| Planner | Requirements, architecture, project/product/design references | `spec.md` | Strong planning model |
-| Generator (contract) | `spec.md`, `meta.json`, previous build logs | `contract.md` | Preferred coding model |
-| Generator (implementation) | `contract.md`, architecture, code, feedback | Code, tests, `build-log.md` | Preferred coding model |
+| Planner | Requirements, architecture, project/product/design references | `spec.md` with behavior scenarios | Strong planning model |
+| Generator (contract) | `spec.md`, `meta.json`, previous build logs | `contract.md` with behavior scenarios, TDD Decision, E2E/runtime plan, checkpoint | Preferred coding model |
+| Generator (implementation) | `contract.md`, architecture, code, feedback | Code, tests, `build-log.md` with scenario/TDD/E2E/modularity/checkpoint evidence | Preferred coding model |
 | Evaluator (contract) | `contract.md`, `spec.md`, `meta.json` | Contract verdict and feedback | Strong review model |
-| Evaluator (sprint) | `contract.md`, `build-log.md`, code, tests | `evaluation.md`, `feedback.md` | Strong review model |
+| Evaluator (sprint) | `contract.md`, `build-log.md`, code, tests | `evaluation.md`, `feedback.md` with scenario/TDD/E2E/modularity verdicts | Strong review model |
 
 Isolation rules:
 

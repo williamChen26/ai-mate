@@ -6,7 +6,7 @@ user_invocable: true
 
 # /evaluator — Sprint Evaluator
 
-Operates in two modes: **contract review** or **sprint evaluation**.
+Operates in two modes: **contract review** or **sprint evaluation**. The quality gate covers behavior scenarios, selective TDD evidence, E2E/runtime behavior, modularity/readability, and human checkpoint readiness.
 
 ## Usage
 
@@ -32,7 +32,7 @@ Locate `docs/exec-plans/active/<run-id>/`. Verify `current_sprint.status` is `"c
 Spawn Evaluator agent with the strongest available review model, with:
 - Agent instructions from `.claude/agents/evaluator.md` (Mode 1 section)
 - Gathered context
-- Instruction to review the contract and write verdict
+- Instruction to review behavior scenarios, acceptance criteria, TDD Decision, E2E/runtime plan, modularity/readability plan, Human Checkpoint, and write verdict
 
 ### Step 4: Process Verdict
 
@@ -66,7 +66,7 @@ Verify `current_sprint.status` is `"evaluating"`.
 Spawn Evaluator agent with the strongest available review model, with:
 - Agent instructions from `.claude/agents/evaluator.md` (Mode 2 section)
 - Gathered context
-- Instruction to: evaluate every criterion → write `evaluation.md` → if FAIL write `feedback.md`
+- Instruction to: evaluate behavior scenarios, TDD evidence/tradeoff, E2E/runtime behavior, modularity/readability, every criterion → write `evaluation.md` → if FAIL write `feedback.md`
 
 ### Step 4: Process Verdict
 
@@ -107,3 +107,25 @@ Report: max iterations reached. Recommend: skip this feature and continue, or es
 Set `status → "failed"`. Report: Evaluator recommends replanning. Suggest `/planner` with refined requirements.
 
 > **Note:** Evaluator's work ends at Step 4. Archiving (`active/` -> `completed/`) belongs to Harness Phase 3, not Evaluator.
+
+## Required Quality Gates
+
+### Contract Review
+
+Reject a contract if any of these are missing or too vague:
+
+- `Behavior Scenarios` before acceptance criteria, preserving the spec's intended behavior.
+- A practical `TDD Decision` with evidence plan. TDD should be selected for core deterministic logic such as parsing, state transitions, permissions, validation, ranking, scheduling, protocol mapping, pricing/calculation rules, and data transformations. Skips are acceptable for documentation, prompt copy, mechanical wiring, simple styling, one-off configuration, or exploratory UI layout when the tradeoff is recorded.
+- E2E/runtime final-behavior verification when a runnable user-visible surface exists, or a documented fallback when true E2E is impractical.
+- Modularity/readability plan covering cohesive boundaries, oversized-file risk, coupling, useful comments, and tests-as-documentation.
+- Human Checkpoint recommendation with local commands when manual validation will help the developer understand the sprint.
+
+### Sprint Evaluation
+
+Fail the sprint when:
+
+- A behavior scenario has no test, E2E/runtime, or manual-observation evidence.
+- A selected TDD path lacks RED/GREEN/REFACTOR evidence, or a skipped TDD path has a weak tradeoff for high-risk core logic.
+- Runnable final behavior was not exercised through E2E/runtime verification.
+- The implementation creates severe low cohesion, avoidable tight coupling, oversized files with mixed responsibilities, missing comments around non-obvious logic, or tests that do not explain core behavior.
+- `build-log.md` omits the Human Checkpoint status and local validation instructions when a meaningful pause point exists.

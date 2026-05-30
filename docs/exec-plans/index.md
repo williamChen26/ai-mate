@@ -25,11 +25,14 @@ Planner writes spec.md
 while features remain:
        |
        +-- Generator picks one feature and writes contract.md
-       +-- Evaluator reviews contract scope and testability
+       |     +-- Behavior Scenarios before acceptance criteria
+       |     +-- TDD Decision, E2E/runtime plan, modularity plan
+       +-- Evaluator reviews scope, scenarios, testability, and checkpoints
        +-- Generator implements that sprint and writes build-log.md
+       |     +-- Scenario evidence, TDD evidence/tradeoff, E2E/runtime result
        +-- Evaluator writes evaluation.md
        |     +-- FAIL: Generator revises, up to max rounds
-       |     +-- PASS: Harness marks feature completed
+       |     +-- PASS: Harness marks feature completed or pauses for manual validation
        |
        v
 all features completed -> archive run
@@ -131,10 +134,25 @@ Each agent should be able to start from a clean context and reconstruct the run 
 | Overall blueprint | `spec.md` |
 | Completed and pending features | `meta.json` |
 | Current sprint scope | `sprints/sprint-N/contract.md` |
+| Behavior scenarios | `spec.md`, `sprints/sprint-N/contract.md` |
+| TDD tradeoff | `sprints/sprint-N/contract.md`, `sprints/sprint-N/build-log.md` |
+| E2E/runtime evidence | `sprints/sprint-N/build-log.md`, `sprints/sprint-N/evaluation.md` |
+| Human checkpoint instructions | `sprints/sprint-N/contract.md`, `sprints/sprint-N/build-log.md` |
 | Previous implementation decisions | `sprints/sprint-{1..N-1}/build-log.md` |
 | Revision feedback | `sprints/sprint-N/iterations/round-M/feedback.md` |
 
 Every phase writes an artifact because that artifact is the next phase's input.
+
+## Behavior-First Quality Lifecycle
+
+Harness runs use a BDD -> selective TDD -> E2E/runtime verification flow:
+
+1. **BDD scenarios first**: `spec.md` and `contract.md` describe behavior scenarios before acceptance criteria. Use Given/When/Then for user-visible behavior; for internal modules, state the precondition, operation, and observable result.
+2. **Selective TDD**: `contract.md` records a `TDD Decision`. Use TDD for core deterministic logic such as parsing, state transitions, permissions, validation, ranking, scheduling, protocol mapping, pricing/calculation rules, and data transformations. TDD may be skipped for documentation, prompt copy, mechanical wiring, simple styling, one-off configuration, or exploratory UI layout when the tradeoff is recorded.
+3. **E2E/runtime final behavior**: Runnable user-visible behavior needs E2E or runtime verification. Static review, typecheck, or build alone is not enough. If true E2E is impractical, the contract and build log must explain the fallback.
+4. **Tests as documentation**: Focused tests should make important behavior understandable to a human developer, not just satisfy coverage.
+5. **Modularity/readability gate**: Sprints should keep modules cohesive and low-coupled, avoid oversized files with mixed responsibilities, and add short comments around non-obvious algorithms, protocol behavior, or edge-case handling.
+6. **Human Checkpoints**: The harness pauses at spec review, contract approval, runnable/manual-validation milestones, and completion when developer understanding matters. Build logs should include local commands and what to inspect.
 
 ## Hotfix Path
 

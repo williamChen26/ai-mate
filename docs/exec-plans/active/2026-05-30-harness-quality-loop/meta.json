@@ -15,8 +15,8 @@
   "current_sprint": {
     "number": 1,
     "feature_id": "F1",
-    "status": "contracting",
-    "round": 0,
+    "status": "evaluating",
+    "round": 1,
     "max_rounds": 3
   },
   "sprint_history": []
