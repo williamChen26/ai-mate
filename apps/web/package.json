@@ -1,0 +1,27 @@
+{
+  "name": "@production-spec-graph/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --hostname 127.0.0.1",
+    "start": "next start",
+    "test:e2e": "playwright test",
+    "test:unit": "vitest run src/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tldraw": "^3.11.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
+    "vitest": "^2.1.9",
+    "typescript": "^5.7.3"
+  }
+}

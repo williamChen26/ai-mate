@@ -1,0 +1,13 @@
+{
+  "name": "production-spec-graph",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm --filter @production-spec-graph/web build",
+    "check": "pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web typecheck && pnpm --filter @production-spec-graph/web build && pnpm --filter @production-spec-graph/web test:e2e",
+    "dev": "pnpm --filter @production-spec-graph/web dev",
+    "test": "pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web test:e2e",
+    "typecheck": "pnpm --filter @production-spec-graph/web typecheck"
+  }
+}

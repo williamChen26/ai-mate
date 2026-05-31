@@ -1,0 +1,88 @@
+{
+  "id": "2026-05-31-ai-spec-canvas-mvp",
+  "status": "sprinting",
+  "task": "Build a tldraw-first AI Product Spec Engine canvas MVP: keep tldraw editor/store state as the source of truth, preserve the runnable infinite canvas shell, and add agent-ready context, typed action, and collaboration-readiness boundaries without implementing real AI or live collaboration yet.",
+  "created_at": "2026-05-31T00:15:57+08:00",
+  "updated_at": "2026-05-31T15:23:11+08:00",
+  "spec_features": [
+    {
+      "id": "F1",
+      "name": "Shared Graph Protocol Foundation (superseded by tldraw-first pivot)",
+      "status": "superseded",
+      "priority": "P0"
+    },
+    {
+      "id": "F2",
+      "name": "Flowchart Graph Operations (superseded by tldraw-first pivot)",
+      "status": "superseded",
+      "priority": "P0"
+    },
+    {
+      "id": "F3",
+      "name": "Runnable Canvas Application Shell",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F4",
+      "name": "Agent-Ready Canvas Context Extraction",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F5",
+      "name": "Typed Agent Action Planning and Dry-Run/Apply Boundary",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F6",
+      "name": "Collaboration and Conflict-Awareness Readiness",
+      "status": "pending",
+      "priority": "P1"
+    }
+  ],
+  "current_sprint": null,
+  "sprint_history": [
+    {
+      "number": 1,
+      "feature_id": "F1",
+      "rounds": 2,
+      "verdict": "passed",
+      "started": "2026-05-31T00:24:14+08:00",
+      "completed": "2026-05-31T01:10:32+08:00"
+    },
+    {
+      "number": 2,
+      "feature_id": "F2",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-05-31T01:12:21+08:00",
+      "completed": "2026-05-31T01:22:57+08:00"
+    },
+    {
+      "number": 3,
+      "feature_id": "F3",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-05-31T01:25:44+08:00",
+      "completed": "2026-05-31T02:30:49+08:00"
+    },
+    {
+      "number": 4,
+      "feature_id": "F4",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-05-31T14:09:32+08:00",
+      "completed": "2026-05-31T14:34:10+08:00"
+    },
+    {
+      "number": 5,
+      "feature_id": "F5",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-05-31T14:57:57+08:00",
+      "completed": "2026-05-31T15:23:11+08:00"
+    }
+  ]
+}

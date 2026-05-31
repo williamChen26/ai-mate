@@ -6,18 +6,19 @@ Update this file after installing Ralph Harness. Generator and Evaluator use it 
 
 | Area | Command | Notes |
 | --- | --- | --- |
-| Tests | `<fill in>` | Focused tests for changed code |
-| Typecheck | `<fill in>` | If the project is typed |
-| Lint | `<fill in>` | If linting is part of normal CI |
-| Build | `<fill in>` | If build output matters for this change |
+| Unit Tests | `pnpm --filter @production-spec-graph/web test:unit` | Focused deterministic checks for canvas context and future agent-readiness logic. |
+| E2E Tests | `pnpm --filter @production-spec-graph/web test:e2e` | Browser smoke for the runnable tldraw canvas shell. Requires local server/browser permissions in Codex. |
+| Typecheck | `pnpm --filter @production-spec-graph/web typecheck` | TypeScript validation for the web app. |
+| Lint | `<not configured>` | No lint command is currently configured. |
+| Build | `pnpm --filter @production-spec-graph/web build` | Production build for the current app surface. |
 
 ## Optional / Situational
 
 | Scenario | Command | Notes |
 | --- | --- | --- |
-| UI behavior | `<fill in>` | Browser or screenshot verification |
-| External binary / protocol | `<fill in>` | Smoke test the actual executable or handshake |
-| Docs | `<fill in>` | Link and freshness checks |
+| UI behavior | `pnpm --filter @production-spec-graph/web test:e2e` | Uses Playwright with installed system Chrome. |
+| Full local check | `pnpm check` | Runs web unit tests, typecheck, build, and browser smoke. |
+| Docs | Manual review | Check `docs/product-direction.md` and active exec-plan pivot notes when product direction changes. |
 
 ## Rule
 
