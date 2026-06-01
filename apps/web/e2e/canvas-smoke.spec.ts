@@ -1,20 +1,21 @@
-/**
- * MVP 运行时契约的浏览器冒烟测试。这个文件按用户/开发者真实使用路径验证：
- * 加载画布，通过浏览器钩子读取上下文，试运行一个智能体动作，显式应用，
- * 然后验证过期计划会被拒绝。
- */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("loads the canvas workspace and keeps tldraw interactive", async ({
   page
 }) => {
   await page.goto("/");
+  await expect(page).toHaveURL(/\/rooms\/room-[A-Za-z0-9._-]+$/);
 
   await expect(page.getByTestId("canvas-shell")).toBeVisible();
   await expect(page.getByText("Production Spec Graph")).toBeVisible();
   await expect(page.getByText("AI coworker canvas")).toBeVisible();
   await expect(page.getByText("Source tldraw")).toBeVisible();
-  await expect(page.getByText("Collaboration planned")).toBeVisible();
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+  await expect(page.getByTestId("sync-status")).toHaveAttribute(
+    "data-state",
+    "online"
+  );
+  await expect(page.getByTestId("collab-identity")).toContainText(/^Device /);
 
   const editor = page.locator(".tl-container").first();
   await expect(editor).toBeVisible();
@@ -27,140 +28,155 @@ test("loads the canvas workspace and keeps tldraw interactive", async ({
   await page.mouse.click(420, 260);
   await page.mouse.wheel(0, -400);
 
-  await page.waitForFunction(
-    () =>
-      typeof window.__PSG_CANVAS_CONTEXT__?.extract ===
-      "function"
-  );
-  await page.waitForFunction(
-    () => typeof window.__PSG_AGENT_ACTIONS__?.dryRun === "function"
+  const roomId = page.url().split("/rooms/").at(1);
+  expect(roomId).toMatch(/^room-[A-Za-z0-9._-]+$/);
+  await expect(page.getByTestId("collab-identity")).toHaveAttribute(
+    "title",
+    /^Tab [A-Z0-9]{4}$/
   );
 
-  const extractedContext = await page.evaluate(() => {
-    const context = window.__PSG_CANVAS_CONTEXT__?.extract();
-    return {
-      context,
-      serialized: JSON.stringify(context)
-    };
-  });
-
-  expect(extractedContext.context?.source.kind).toBe("tldraw");
-  expect(extractedContext.context?.source.sourceOfTruth).toBe(
-    "tldraw-editor-store-document-state"
-  );
-  expect(extractedContext.context?.document).toBeTruthy();
-  expect(extractedContext.context?.shapes).toBeInstanceOf(Array);
-  expect(extractedContext.context?.selection).toBeTruthy();
-  expect(extractedContext.context?.viewport).toBeTruthy();
-  expect(extractedContext.context?.recentChanges.scope).toBe("local-session");
-  expect(
-    extractedContext.context?.futureAgentConstraints.unsupportedAssumptions
-  ).toContain("no-ai-model-calls");
-  expect(extractedContext.serialized).toContain(
-    "tldraw-editor-store-document-state"
-  );
-
-  const actionExercise = await page.evaluate(() => {
-    /**
-     * 通过未来智能体代码会使用的同一个开发者钩子读取实时上下文。
-     * 端到端路径保持基于钩子，可以验证真实浏览器集成，而不仅是纯模块。
-     */
-    const extract = () => window.__PSG_CANVAS_CONTEXT__!.extract();
-    /**
-     * 在浏览器沙箱内镜像 `createContextReference`，
-     * 让冒烟测试不需要把应用模块导入 Playwright 里也能准备真实计划。
-     */
-    const toReference = (context: ReturnType<typeof extract>) => ({
-      schemaVersion: context.schemaVersion,
-      source: {
-        adapter: context.source.adapter,
-        sourceOfTruth: context.source.sourceOfTruth
-      },
-      observedChangeCount: context.recentChanges.observedChangeCount,
-      shapeIds: context.shapes.map((shape) => shape.id).sort(),
-      affectedShapeIds: [...context.recentChanges.affectedShapeIds].sort()
-    });
-    /**
-     * 将上下文缩减成稳定标记；这些字段在试运行或无效/过期检查期间不应该变化。
-     */
-    const comparableMarkers = (context: ReturnType<typeof extract>) => ({
-      shapeCount: context.document.shapeCount,
-      shapeIds: context.shapes.map((shape) => shape.id).sort(),
-      selectedShapeIds: [...context.selection.shapeIds].sort(),
-      recentChangeCount: context.recentChanges.observedChangeCount
-    });
-
-    const baseline = extract();
-    const createId = `shape:psg-e2e-${Date.now()}`;
-    const plan = {
-      planId: "plan:e2e-create-text",
-      context: toReference(baseline),
-      actions: [
-        {
-          kind: "createText",
-          id: createId,
-          text: "Sprint 5 hook smoke",
-          x: 120,
-          y: 160
-        }
-      ]
-    };
-
-    const baselineMarkers = comparableMarkers(baseline);
-    const validation = window.__PSG_AGENT_ACTIONS__!.validate(plan);
-    const dryRun = window.__PSG_AGENT_ACTIONS__!.dryRun(plan);
-    const afterDryRun = extract();
-    const applyResult = window.__PSG_AGENT_ACTIONS__!.apply(plan);
-    const afterApply = extract();
-    const staleResult = window.__PSG_AGENT_ACTIONS__!.dryRun(plan);
-    const afterStale = extract();
-
-    return {
-      createId,
-      validation,
-      dryRun,
-      dryRunSerialized: JSON.stringify(dryRun),
-      dryRunMarkersUnchanged:
-        JSON.stringify(baselineMarkers) ===
-        JSON.stringify(comparableMarkers(afterDryRun)),
-      applyResult,
-      afterApplyMarkers: comparableMarkers(afterApply),
-      appliedShape: afterApply.shapes.find((shape) => shape.id === createId),
-      staleResult,
-      staleMarkersUnchanged:
-        JSON.stringify(comparableMarkers(afterApply)) ===
-        JSON.stringify(comparableMarkers(afterStale))
-    };
-  });
-
-  expect(actionExercise.validation.ok).toBe(true);
-  expect(actionExercise.validation.errors).toEqual([]);
-  expect(actionExercise.dryRun.ok).toBe(true);
-  expect(actionExercise.dryRun.expectedImpact?.summary.creates).toBe(1);
-  expect(actionExercise.dryRunSerialized).toContain("dry-run");
-  expect(actionExercise.dryRunMarkersUnchanged).toBe(true);
-  expect(actionExercise.applyResult.ok).toBe(true);
-  expect(actionExercise.applyResult.status).toBe("applied");
-  expect(actionExercise.applyResult.appliedActions[0]?.created).toContain(
-    actionExercise.createId
-  );
-  expect(actionExercise.appliedShape).toEqual(
-    expect.objectContaining({
-      id: actionExercise.createId,
-      type: "text"
-    })
-  );
-  expect(actionExercise.afterApplyMarkers.shapeIds).toContain(
-    actionExercise.createId
-  );
-  expect(actionExercise.staleResult.ok).toBe(false);
-  expect(actionExercise.staleResult.errors.map((error) => error.code)).toEqual(
-    expect.arrayContaining(["STALE_SHAPE_IDS"])
-  );
-  expect(actionExercise.staleMarkersUnchanged).toBe(true);
+  const shareButton = page.getByTestId("share-room-button");
+  await expect(shareButton).toHaveAttribute("data-share-url", page.url());
+  await shareButton.click();
+  await expect(shareButton).toHaveText(/Copied|Link ready/);
 
   await expect(editor).toBeVisible();
   await expect(page.getByText(/Unhandled Runtime Error|Failed to compile/i)).toHaveCount(
     0
   );
 });
+
+test("syncs one room between independent browser contexts", async ({
+  browser
+}) => {
+  const firstContext = await browser.newContext();
+  const secondContext = await browser.newContext();
+  const firstPage = await firstContext.newPage();
+  const secondPage = await secondContext.newPage();
+
+  try {
+    const roomPath = `/rooms/e2e-shared-room-${Date.now()}`;
+    await firstPage.goto(roomPath);
+    await secondPage.goto(roomPath);
+
+    await expect(firstPage.getByTestId("sync-status")).toHaveText(
+      "Backend sync"
+    );
+    await expect(secondPage.getByTestId("sync-status")).toHaveText(
+      "Backend sync"
+    );
+
+    expect(firstPage.url()).toContain(roomPath);
+    expect(secondPage.url()).toContain(roomPath);
+
+    const firstIdentity = await readIdentity(firstPage);
+    const secondIdentity = await readIdentity(secondPage);
+    expect(firstIdentity.deviceLabel).toMatch(/^Device [A-Z0-9]{4}$/);
+    expect(secondIdentity.deviceLabel).toMatch(/^Device [A-Z0-9]{4}$/);
+    expect(firstIdentity.sessionLabel).toMatch(/^Tab [A-Z0-9]{4}$/);
+    expect(secondIdentity.sessionLabel).toMatch(/^Tab [A-Z0-9]{4}$/);
+    await expect(firstPage.getByTestId("collab-identity")).toContainText(
+      firstIdentity.deviceLabel
+    );
+    await expect(secondPage.getByTestId("collab-identity")).toContainText(
+      secondIdentity.deviceLabel
+    );
+
+    await firstPage.reload();
+    await expect(firstPage).toHaveURL(new RegExp(`${roomPath}$`));
+    await expect(firstPage.getByTestId("sync-status")).toHaveText(
+      "Backend sync"
+    );
+    const afterReloadIdentity = await readIdentity(firstPage);
+    expect(afterReloadIdentity.deviceLabel).toBe(firstIdentity.deviceLabel);
+
+    const syncedText = `Synced through dedicated backend ${Date.now()}`;
+    await createTextShapeThroughUi(firstPage, syncedText);
+    await expect(secondPage.getByText(syncedText).first()).toBeAttached({
+      timeout: 12_000
+    });
+
+    await firstPage.goto("/");
+    await expect(firstPage).toHaveURL(/\/rooms\/room-[A-Za-z0-9._-]+$/);
+    const generatedUrl = firstPage.url();
+    await firstPage.goBack();
+    await expect(firstPage).toHaveURL(new RegExp(`${roomPath}$`));
+    await firstPage.goForward();
+    await expect(firstPage).toHaveURL(generatedUrl);
+  } finally {
+    await firstContext.close();
+    await secondContext.close();
+  }
+});
+
+test("keeps same-device tabs as independent live sessions", async ({
+  browser
+}) => {
+  const context = await browser.newContext();
+  const firstPage = await context.newPage();
+  const secondPage = await context.newPage();
+
+  try {
+    const roomPath = `/rooms/e2e-same-device-${Date.now()}`;
+    await firstPage.goto(roomPath);
+    await expect(firstPage.getByTestId("sync-status")).toHaveText(
+      "Backend sync"
+    );
+
+    await secondPage.goto(roomPath);
+    await expect(secondPage.getByTestId("sync-status")).toHaveText(
+      "Backend sync"
+    );
+
+    const firstIdentity = await readIdentity(firstPage);
+    const secondIdentity = await readIdentity(secondPage);
+
+    expect(firstPage.url()).toContain(roomPath);
+    expect(secondPage.url()).toContain(roomPath);
+    expect(firstIdentity.deviceLabel).toBe(secondIdentity.deviceLabel);
+    expect(firstIdentity.sessionLabel).not.toBe(secondIdentity.sessionLabel);
+
+    await expect(firstPage.locator(".tl-container").first()).toBeVisible();
+    await expect(secondPage.locator(".tl-container").first()).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("rejects invalid room routes before sync starts", async ({ page }) => {
+  await page.goto("/rooms/%2E%2E%2Fbad");
+
+  await expect(page.getByTestId("canvas-shell")).toBeVisible();
+  await expect(page.getByTestId("sync-status")).toHaveText("Invalid room");
+  await expect(page.locator(".canvas-shell__error")).toContainText(
+    "Room link is not valid"
+  );
+
+  await expect(page.locator(".tl-container")).toHaveCount(0);
+});
+
+async function createTextShapeThroughUi(
+  page: Page,
+  text: string
+): Promise<void> {
+  const editor = page.locator(".tl-container").first();
+  await expect(editor).toBeVisible();
+
+  const box = await editor.boundingBox();
+  expect(box).toBeTruthy();
+
+  await page.keyboard.press("t");
+  await page.mouse.click((box?.x ?? 0) + 260, (box?.y ?? 0) + 220);
+  await page.keyboard.type(text);
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByText(text).first()).toBeAttached({ timeout: 8_000 });
+}
+
+async function readIdentity(page: Page) {
+  const identity = page.getByTestId("collab-identity");
+  await expect(identity).toBeVisible();
+  const deviceLabel = (await identity.textContent())?.trim() ?? "";
+  const sessionLabel = (await identity.getAttribute("title")) ?? "";
+  return { deviceLabel, sessionLabel };
+}

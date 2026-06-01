@@ -1,0 +1,82 @@
+{
+  "id": "2026-05-31-node-sync-backend-collaboration",
+  "status": "completed",
+  "task": "Implement real tldraw collaboration with a dedicated mature Node backend app under apps/ alongside apps/web. The backend hosts the tldraw WebSocket sync server using process-local InMemorySyncStorage; the web client uses device identity and route room ids to create or join shared collaborative rooms.",
+  "created_at": "2026-05-31T23:37:51+08:00",
+  "updated_at": "2026-06-01T22:11:58+08:00",
+  "spec_features": [
+    {
+      "id": "F1",
+      "name": "Backend App Foundation and In-Memory Sync Endpoint",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F2",
+      "name": "Web Client Sync Store and Stable Device Identity",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F3",
+      "name": "Route-Driven Room Creation and Joining",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F4",
+      "name": "Presence, Status, Multi-Tab Behavior, and Failure Recovery",
+      "status": "completed",
+      "priority": "P1"
+    },
+    {
+      "id": "F5",
+      "name": "Integrated Verification, Developer Docs, and Quality Commands",
+      "status": "completed",
+      "priority": "P0"
+    }
+  ],
+  "current_sprint": null,
+  "sprint_history": [
+    {
+      "number": 1,
+      "feature_id": "F1",
+      "rounds": 2,
+      "verdict": "passed",
+      "started": "2026-05-31T23:37:51+08:00",
+      "completed": "2026-06-01T01:13:44+08:00"
+    },
+    {
+      "number": 2,
+      "feature_id": "F2",
+      "rounds": 2,
+      "verdict": "passed",
+      "started": "2026-06-01T01:25:34+08:00",
+      "completed": "2026-06-01T01:58:24+08:00"
+    },
+    {
+      "number": 3,
+      "feature_id": "F3",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-01T20:34:57+08:00",
+      "completed": "2026-06-01T21:03:53+08:00"
+    },
+    {
+      "number": 4,
+      "feature_id": "F4",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-01T21:21:15+08:00",
+      "completed": "2026-06-01T21:50:16+08:00"
+    },
+    {
+      "number": 5,
+      "feature_id": "F5",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-01T21:55:57+08:00",
+      "completed": "2026-06-01T22:11:58+08:00"
+    }
+  ]
+}

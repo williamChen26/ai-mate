@@ -1,28 +1,46 @@
 # Quality Commands
 
-Update this file after installing Ralph Harness. Generator and Evaluator use it to decide which checks must run before a sprint can pass.
+Generator and Evaluator use this file to decide which checks must run before a
+sprint can pass.
 
 ## Required Before Handoff
 
 | Area | Command | Notes |
 | --- | --- | --- |
-| Unit Tests | `pnpm --filter @production-spec-graph/web test:unit` | Focused deterministic checks for canvas context and future agent-readiness logic. |
-| E2E Tests | `pnpm --filter @production-spec-graph/web test:e2e` | Browser smoke for the runnable tldraw canvas shell. Requires local server/browser permissions in Codex. |
-| Typecheck | `pnpm --filter @production-spec-graph/web typecheck` | TypeScript validation for the web app. |
+| Full Quality Gate | `pnpm check` | Sequential root handoff path. Runs server test/typecheck/build/smoke, web unit/typecheck/build/E2E, and recovery smoke. Keep this sequential to avoid `.next/types` races between Next build and TypeScript. |
+| Backend Unit/Integration Tests | `pnpm --filter @production-spec-graph/server test` | Covers config parsing, room/session validation, room registry behavior, and Fastify health/WebSocket route behavior. |
+| Backend Typecheck | `pnpm --filter @production-spec-graph/server typecheck` | TypeScript validation for the dedicated Node sync backend. |
+| Backend Build | `pnpm --filter @production-spec-graph/server build` | Production TypeScript build for `apps/server`. |
+| Backend Smoke | `pnpm --filter @production-spec-graph/server smoke` | Runtime smoke for `/health`, `/ready`, valid WebSocket upgrade, invalid room rejection, two sessions in one room, and process-local storage diagnostics. |
+| Web Unit Tests | `pnpm --filter @production-spec-graph/web test:unit` | Deterministic checks for sync config, device/session identity, room routing, status mapping, collaborator cues, and share URL construction. |
+| Web Typecheck | `pnpm --filter @production-spec-graph/web typecheck` | TypeScript validation for the Next.js web app. Run sequentially after build/type generation if `.next/types` is missing. |
+| Web Build | `pnpm --filter @production-spec-graph/web build` | Production Next.js build for the route-backed tldraw app. |
+| Web Integrated E2E | `pnpm --filter @production-spec-graph/web test:e2e` | Starts the backend and web app, then verifies root room creation, valid shared-room sync, invalid route rejection, status/share UI, and same-device multi-tab identity behavior. Requires local browser/port permissions. |
+| Web Recovery Smoke | `pnpm --filter @production-spec-graph/web test:recovery` | Controls local web/backend processes to verify backend-unavailable and backend restart recovery behavior. Requires local browser/port/process permissions. |
 | Lint | `<not configured>` | No lint command is currently configured. |
-| Build | `pnpm --filter @production-spec-graph/web build` | Production build for the current app surface. |
 
 ## Optional / Situational
 
 | Scenario | Command | Notes |
 | --- | --- | --- |
-| UI behavior | `pnpm --filter @production-spec-graph/web test:e2e` | Uses Playwright with installed system Chrome. |
-| Full local check | `pnpm check` | Runs web unit tests, typecheck, build, and browser smoke. |
-| Docs | Manual review | Check `docs/product-direction.md` and active exec-plan pivot notes when product direction changes. |
+| Start Backend | `pnpm --filter @production-spec-graph/server dev` | Starts the Fastify sync backend on `http://127.0.0.1:3001` by default. |
+| Start Web | `pnpm --filter @production-spec-graph/web dev` | Starts Next.js on `http://127.0.0.1:3000` with `NEXT_PUBLIC_PSG_SYNC_SERVER_URL=http://127.0.0.1:3001`. |
+| Health Probe | `curl -fsS http://127.0.0.1:3001/health` | Checks backend liveness while `apps/server` is running. |
+| Readiness Probe | `curl -fsS http://127.0.0.1:3001/ready` | Checks sync readiness and process-local room/storage diagnostics while `apps/server` is running. |
+| Architecture Review | Manual review of `ARCHITECTURE.md` | Confirm implemented architecture, tldraw package compatibility, route contract, and non-durable storage limits are still accurate after collaboration changes. |
+| Run-Specific Evidence | Manual review of `docs/exec-plans/active/<run-id>/sprints/*` | Inspect sprint contracts, build logs, evaluations, and known limitations for the active harness run. |
 
 ## Rule
 
-If this file is incomplete, agents must infer the smallest relevant validation commands from package scripts, Makefile, CI, or repository docs, then record what they ran in `build-log.md` and `evaluation.md`.
+If this file is incomplete, agents must infer the smallest relevant validation
+commands from package scripts, Makefile, CI, or repository docs, then record what
+they ran in `build-log.md` and `evaluation.md`.
+
+`pnpm check` is the default pre-handoff gate for this repository. Individual
+commands may be used for focused development, but sprint handoff should record
+the full root command unless a tool/permission issue makes one sub-check
+impossible. In that case, record the failed command, reason, and the exact
+manual fallback.
 
 ## Harness Quality Lifecycle
 

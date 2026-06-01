@@ -4,10 +4,11 @@
   "version": "0.0.0",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "build": "pnpm --filter @production-spec-graph/web build",
-    "check": "pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web typecheck && pnpm --filter @production-spec-graph/web build && pnpm --filter @production-spec-graph/web test:e2e",
+    "build": "pnpm --filter @production-spec-graph/server build && pnpm --filter @production-spec-graph/web build",
+    "check": "pnpm --filter @production-spec-graph/server test && pnpm --filter @production-spec-graph/server typecheck && pnpm --filter @production-spec-graph/server build && pnpm --filter @production-spec-graph/server smoke && pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web typecheck && pnpm --filter @production-spec-graph/web build && pnpm --filter @production-spec-graph/web test:e2e && pnpm --filter @production-spec-graph/web test:recovery",
     "dev": "pnpm --filter @production-spec-graph/web dev",
-    "test": "pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web test:e2e",
-    "typecheck": "pnpm --filter @production-spec-graph/web typecheck"
+    "dev:server": "pnpm --filter @production-spec-graph/server dev",
+    "test": "pnpm --filter @production-spec-graph/server test && pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web test:e2e && pnpm --filter @production-spec-graph/web test:recovery",
+    "typecheck": "pnpm --filter @production-spec-graph/server typecheck && pnpm --filter @production-spec-graph/web typecheck"
   }
 }

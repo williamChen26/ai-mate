@@ -2,9 +2,16 @@
 
 ## Decision
 
-The product direction is now **tldraw-first**. The canvas document, tldraw editor/store, and future tldraw sync layer should be treated as the source of truth. We should not continue building a separate flowchart-specific graph protocol for the MVP.
+The product direction is now **tldraw-first**. The canvas document, tldraw
+editor/store, and tldraw sync layer should be treated as the source of truth.
+We should not continue building a separate flowchart-specific graph protocol
+for the MVP.
 
-The next architecture layer should be an AI coworker layer that reads the current tldraw document state, recent user changes, selection, viewport, and collaboration context, then proposes or performs typed tldraw editing actions. This keeps the product close to the real user workspace instead of maintaining a parallel model that can drift from the canvas.
+The next architecture layer should be a server-side AI coworker that joins or
+observes a sync room as a trusted participant. It should read room state and
+editing changes through the collaboration backend, then propose or perform
+controlled tldraw edits through that server-side boundary. The front-end should
+not expose browser-global canvas context or AI action hooks.
 
 ## Why This Changed
 
@@ -20,10 +27,10 @@ Keep the current app as a runnable tldraw canvas shell:
 
 - Full-screen editable tldraw canvas.
 - Compact operational chrome.
+- Route-backed live collaboration through the dedicated Node sync backend.
 - No custom flowchart CRUD.
 - No custom flowchart graph protocol.
 - No AI agent implementation yet.
-- No collaboration implementation yet.
 
 ## Future Architecture
 
@@ -33,25 +40,30 @@ Use tldraw document/editor state as the canonical workspace data.
 
 ### AI Coworker Layer
 
-Add a package later, likely under `packages/agent-runtime` or `packages/canvas-intelligence`, that owns:
+Add server-side AI orchestration later, likely under `apps/server` or a backend
+package when it grows large enough. It should own:
 
-- canvas context extraction for AI prompts
-- recent-change summaries
-- typed agent action schemas
-- conflict/ambiguity checks before applying agent edits
-- audit trail of agent suggestions and applied changes
+- room snapshot and change observation through tldraw sync primitives
+- trusted AI participant/session identity
+- typed server-side edit proposals or commands
+- conflict/ambiguity checks before applying AI edits
+- audit trail of AI suggestions and applied changes
 
-This package should depend on tldraw concepts and should not invent product-domain graph types unless a specific product-spec extraction feature needs them.
+This layer should depend on tldraw/sync concepts and should not invent
+product-domain graph types unless a specific product-spec extraction feature
+needs them.
 
 ### Collaboration Layer
 
-Add collaboration later using tldraw sync primitives. The AI agent should eventually appear as a collaborator-like participant that can:
+Human collaboration is implemented with tldraw sync primitives. The AI agent
+should eventually appear as a collaborator-like participant from the backend
+side that can:
 
-- observe current canvas state
-- notice user changes since its last plan
+- observe current room state
+- notice user changes since its last plan through sync events or room snapshots
 - explain conflicts or stale assumptions
 - propose edits before applying them
-- apply edits through the same tldraw editor/store action path as humans
+- apply edits through the same shared document/sync boundary as humans
 
 ## Deprecated Direction
 
