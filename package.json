@@ -9,6 +9,7 @@
     "dev": "pnpm --filter @production-spec-graph/web dev",
     "dev:server": "pnpm --filter @production-spec-graph/server dev",
     "test": "pnpm --filter @production-spec-graph/server test && pnpm --filter @production-spec-graph/web test:unit && pnpm --filter @production-spec-graph/web test:e2e && pnpm --filter @production-spec-graph/web test:recovery",
-    "typecheck": "pnpm --filter @production-spec-graph/server typecheck && pnpm --filter @production-spec-graph/web typecheck"
+    "typecheck": "pnpm --filter @production-spec-graph/server typecheck && pnpm --filter @production-spec-graph/web typecheck",
+    "agent": "pnpm --filter mate dev"
   }
 }
