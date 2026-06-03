@@ -10,8 +10,10 @@ The implemented workspace packages are:
 
 | Package | Role |
 | --- | --- |
-| `apps/web` | Next.js app that renders the full-screen tldraw canvas, owns route-backed room entry, creates stable browser/device identity, and connects to the sync backend with `@tldraw/sync@5.0.1`. |
-| `apps/server` | Fastify Node service that exposes health/readiness endpoints and a raw WebSocket tldraw sync route using `@tldraw/sync-core@5.0.1`. |
+| `packages/shared` | Zod-backed shared TypeScript contracts for AI input-side room context, canvas snapshots, operation events, and freshness metadata. |
+| `apps/mate` | Room-aware AI coworker boundary that ingests shared canvas context feeds, separates observation from interpretation, detects stale context, and returns deterministic non-mutating suggestions/questions for local validation. |
+| `apps/web` | Next.js app that renders the full-screen tldraw canvas, owns route-backed room entry, creates stable browser/device identity, connects to the sync backend with `@tldraw/sync@5.0.1`, publishes room context, and exposes a minimal raw AI message/result surface. |
+| `apps/server` | Fastify Node service that exposes health/readiness endpoints, room context endpoints, room mate message endpoints, and a raw WebSocket tldraw sync route using `@tldraw/sync-core@5.0.1`. |
 
 ## Collaboration Flow
 
@@ -42,7 +44,12 @@ Default local endpoints:
 | Endpoint | Purpose |
 | --- | --- |
 | `GET http://127.0.0.1:3001/health` | Liveness and service metadata. |
-| `GET http://127.0.0.1:3001/ready` | Readiness, room stats, and storage durability diagnostics. |
+| `GET http://127.0.0.1:3001/ready` | Readiness, room stats, room-scoped agent lifecycle diagnostics, and storage durability diagnostics. |
+| `GET http://127.0.0.1:3001/rooms/:roomId/context` | Process-local room context feed diagnostics for the latest canvas snapshot, recent operation events, and freshness metadata. |
+| `POST http://127.0.0.1:3001/rooms/:roomId/context/snapshot` | Accepts a Zod-validated compact canvas snapshot for the room. |
+| `POST http://127.0.0.1:3001/rooms/:roomId/context/events` | Accepts Zod-validated normalized user operation events for the room. |
+| `GET http://127.0.0.1:3001/rooms/:roomId/mate` | Returns the latest raw mate turn response for the room, if one exists. |
+| `POST http://127.0.0.1:3001/rooms/:roomId/mate/messages` | Accepts a room-scoped user message, reads the latest context feed, invokes deterministic `apps/mate`, and returns raw structured mate result data. |
 | `ws://127.0.0.1:3001/sync/:roomId` | Raw tldraw sync WebSocket route. |
 
 Backend configuration:
@@ -57,6 +64,85 @@ Backend configuration:
 The backend deliberately uses raw WebSockets, not Socket.IO. This matches
 tldraw sync expectations and avoids adding a protocol layer incompatible with
 `useSync`.
+
+The backend also owns the first room-scoped AI coworker lifecycle boundary. When
+a valid sync room is initialized, the room registry requests a corresponding
+`mate` lifecycle record and exposes it through `/ready` under
+`agentLifecycle`. In the current MVP this lifecycle is diagnostic-only and
+defaults to an unavailable degraded state when no `mate` adapter is configured;
+normal tldraw sync remains usable even when the AI coworker is unavailable.
+
+Room context ingestion is also process-local. The web app can publish compact
+tldraw-derived snapshots and normalized operation events to the backend context
+endpoints. These payloads use `@production-spec-graph/shared` Zod schemas so
+web, server, and future `apps/mate` ingestion share one input-side contract.
+This context feed is factual input for future AI reasoning; it deliberately does
+not define AI outputs, suggestions, action proposals, or autonomous canvas
+mutations.
+
+## Mate App
+
+`apps/mate` owns the first room-aware AI coworker ingestion boundary. It imports
+the shared F2 room context feed contract, validates a mate turn request, and
+builds a deterministic turn result from:
+
+- latest canvas snapshot facts
+- recent normalized operation events
+- optional user chat text
+- freshness metadata
+- bounded process-local room memory
+
+Mate turn results keep raw observations separate from inferred intent and
+uncertainty. They carry the snapshot/event freshness used for the turn and mark
+the result stale when events advanced after the snapshot. Current output is
+uses the shared `agent-output.v1` protocol. Current output can be a
+non-mutating suggestion/question or a typed canvas action proposal. Proposals are
+data only: they carry bounded action fields, freshness metadata,
+`requiresAcceptance: true`, and are never applied automatically.
+
+The local smoke command is credential-free:
+
+```sh
+pnpm --filter mate smoke
+```
+
+It constructs a sample room context feed and validates that mate reads canvas
+facts, preserves freshness/staleness, and returns only a non-mutating result.
+
+## Raw AI Interaction Path
+
+The first interactive AI path is intentionally logic-first:
+
+1. Web publishes the current room snapshot and a chat-boundary operation event.
+2. Web posts the user message to
+   `POST /rooms/:roomId/mate/messages` with browser/device/session metadata.
+3. Server validates the message, reads the latest room context feed, adds agent
+   lifecycle correlation when available, and invokes the deterministic mate
+   turn boundary.
+4. Server returns a raw response envelope containing room id, message metadata,
+   context freshness, and the mate turn result.
+5. Web renders that raw structured data in a small secondary panel.
+
+This path proves the current conversation/data flow without committing to final
+chat UI design.
+
+## Agent Output And Proposal Safety
+
+The shared package defines `agent-output.v1` for:
+
+- text suggestions
+- questions
+- safe canvas action proposals
+
+The only current proposed action is `create-text-note`, represented as bounded
+data with `mutatesCanvas: true`. Delivery of the proposal itself is still
+non-mutating. Server validation reports proposal state in `outputValidation`,
+including `applied: false`. Stale proposals are blocked using context freshness,
+and malformed outputs are rejected before being stored as the latest room
+response.
+
+No tldraw action executor exists yet. Web renders proposal state as raw JSON in
+the secondary `Mate raw` panel.
 
 ## Web App
 
@@ -93,9 +179,14 @@ profile share the same device id but have distinct session diagnostics.
 
 The app configures a tldraw `TLUserStore` using supported tldraw 5.0.1 APIs so
 clients get stable identity cues such as `Device XXXX` and deterministic colors.
-The web app does not expose browser-global canvas or sync diagnostic hooks.
-Future AI participation should enter through the backend sync room, not through
-front-end context extraction.
+The web app exposes a developer-facing room context runtime hook for local
+validation of snapshot/event publishing. Future user-facing AI participation
+should enter through the room-scoped server and mate boundaries, not hidden
+front-end editor access.
+
+The current AI surface is a minimal raw-data panel in the room canvas. It is
+secondary to the tldraw workspace and exists to validate the web -> server ->
+mate -> web path before product styling.
 
 ## Status And Recovery
 
@@ -169,6 +260,7 @@ Focused commands:
 ```sh
 pnpm --filter @production-spec-graph/server dev
 pnpm --filter @production-spec-graph/server smoke
+pnpm --filter mate smoke
 pnpm --filter @production-spec-graph/web dev
 pnpm --filter @production-spec-graph/web test:e2e
 pnpm --filter @production-spec-graph/web test:recovery

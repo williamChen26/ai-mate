@@ -10,7 +10,7 @@ export default defineConfig({
     {
       command: "pnpm --filter @production-spec-graph/server dev",
       url: "http://127.0.0.1:3001/ready",
-      reuseExistingServer: true,
+      reuseExistingServer: false,
       timeout: 120_000
     },
     {
@@ -20,7 +20,7 @@ export default defineConfig({
         NEXT_PUBLIC_PSG_SYNC_SERVER_URL: "http://127.0.0.1:3001"
       },
       url: "http://127.0.0.1:3100",
-      reuseExistingServer: true,
+      reuseExistingServer: false,
       timeout: 120_000
     }
   ],

@@ -1,0 +1,94 @@
+{
+  "id": "2026-06-03-ai-coworker-rooms",
+  "status": "sprinting",
+  "task": "现在 server、web、mate 需要串联到一起：mate 是白板协同 agent，知道当前白板内容并实时观察用户操作；server 每创建 room 自动请求 agent 进来并新开会话，持续接收用户操作并提供画布 snapshot；web 提供画布信息、操作信息、AI 消费入口、AI 输出处理入口，以及对话输入入口。请整理思路并一步一步执行。",
+  "created_at": "2026-06-03T11:08:51+08:00",
+  "updated_at": "2026-06-03T20:01:57+08:00",
+  "spec_features": [
+    {
+      "id": "F1",
+      "name": "Room Agent Lifecycle Contract",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F2",
+      "name": "Canvas Context and Operation Event Stream",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F3",
+      "name": "Mate Session Context Ingestion and Memory Boundary",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F4",
+      "name": "Web AI Interaction Surface",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F5",
+      "name": "Agent Output Protocol and Safe Canvas Actions",
+      "status": "completed",
+      "priority": "P1"
+    },
+    {
+      "id": "F6",
+      "name": "Runtime Observability and Manual Validation Loop",
+      "status": "pending",
+      "priority": "P1"
+    }
+  ],
+  "current_sprint": {
+    "number": 6,
+    "feature_id": "F6",
+    "status": "generating",
+    "round": 1,
+    "max_rounds": 3
+  },
+  "sprint_history": [
+    {
+      "number": 1,
+      "feature_id": "F1",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-03T11:25:18+08:00",
+      "completed": "2026-06-03T11:56:18+08:00"
+    },
+    {
+      "number": 2,
+      "feature_id": "F2",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-03T17:04:42+08:00",
+      "completed": "2026-06-03T17:42:59+08:00"
+    },
+    {
+      "number": 3,
+      "feature_id": "F3",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-03T17:47:16+08:00",
+      "completed": "2026-06-03T17:56:46+08:00"
+    },
+    {
+      "number": 4,
+      "feature_id": "F4",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-03T18:05:22+08:00",
+      "completed": "2026-06-03T18:25:31+08:00"
+    },
+    {
+      "number": 5,
+      "feature_id": "F5",
+      "rounds": 1,
+      "verdict": "passed",
+      "started": "2026-06-03T19:46:33+08:00",
+      "completed": "2026-06-03T19:56:02+08:00"
+    }
+  ]
+}

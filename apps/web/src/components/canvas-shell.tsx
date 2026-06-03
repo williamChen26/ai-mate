@@ -5,7 +5,13 @@
  * tldraw 拥有实时编辑器，库模块拥有协同配置和身份逻辑，
  * 这个组件负责把它们接成简洁的用户工作区。
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode
+} from "react";
 import { useSync } from "@tldraw/sync";
 import {
   computed,
@@ -13,6 +19,7 @@ import {
   inlineBase64AssetStore,
   Tldraw,
   UserRecordType,
+  type Editor,
   type TLStoreWithStatus,
   type TLUserStore
 } from "tldraw";
@@ -34,6 +41,11 @@ import {
   createSessionDiagnostics
 } from "@/lib/collaborator-identity";
 import { buildRoomShareUrl } from "@/lib/room-share";
+import {
+  createContextBaseUrlFromRoomUri,
+  registerRoomContextRuntime
+} from "@/lib/room-context";
+import { createRoomMateClient } from "@/lib/mate-client";
 
 type CollaborationState =
   | {
@@ -138,10 +150,124 @@ function SyncedCanvasShell({
       share={share}
     >
       <div className="canvas-shell__editor" data-testid="tldraw-host">
-        <Tldraw store={store} />
+        <Tldraw
+          store={store}
+          onMount={(editor) => registerMountedRoomContext(editor, collaboration)}
+        />
       </div>
+      <MateRawPanel collaboration={collaboration} />
     </CanvasShellFrame>
   );
+}
+
+function MateRawPanel({
+  collaboration
+}: {
+  collaboration: Extract<CollaborationState, { ok: true }>;
+}) {
+  const [message, setMessage] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "ready" | "error">(
+    "idle"
+  );
+  const [rawResult, setRawResult] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
+  const client = useMemo(
+    () =>
+      createRoomMateClient({
+        baseUrl: createContextBaseUrlFromRoomUri(collaboration.roomUri),
+        roomId: collaboration.roomId,
+        source: {
+          deviceId: collaboration.deviceId,
+          sessionId: collaboration.sessionId,
+          tabId: collaboration.tabId
+        }
+      }),
+    [collaboration]
+  );
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = message.trim();
+    if (!trimmed) {
+      setStatus("error");
+      setError("Message is required.");
+      return;
+    }
+
+    setStatus("sending");
+    setError(null);
+    setRawResult(null);
+    await window.__PSG_ROOM_CONTEXT__?.publishSnapshot();
+    await window.__PSG_ROOM_CONTEXT__?.emitChatBoundary(trimmed);
+    const result = await client.sendMessage(trimmed);
+
+    if (!result.ok) {
+      setStatus("error");
+      setError(result.error);
+      return;
+    }
+
+    setStatus("ready");
+    setRawResult(result.value);
+  }
+
+  return (
+    <aside className="canvas-shell__mate-panel" aria-label="Mate raw data">
+      <form className="canvas-shell__mate-form" onSubmit={submit}>
+        <div className="canvas-shell__mate-row">
+          <strong>Mate raw</strong>
+          <span data-testid="mate-status">
+            {status === "idle"
+              ? "Idle"
+              : status === "sending"
+                ? "Sending"
+                : status === "ready"
+                  ? "Ready"
+                  : "Error"}
+          </span>
+        </div>
+        <textarea
+          data-testid="mate-message-input"
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          rows={2}
+          placeholder="Message"
+        />
+        <button
+          data-testid="mate-send-button"
+          type="submit"
+          disabled={status === "sending"}
+        >
+          Send
+        </button>
+      </form>
+      {error ? (
+        <pre className="canvas-shell__mate-error" data-testid="mate-error">
+          {error}
+        </pre>
+      ) : null}
+      {rawResult ? (
+        <pre className="canvas-shell__mate-raw" data-testid="mate-raw-result">
+          {JSON.stringify(rawResult, null, 2)}
+        </pre>
+      ) : null}
+    </aside>
+  );
+}
+
+function registerMountedRoomContext(
+  editor: Editor,
+  collaboration: Extract<CollaborationState, { ok: true }>
+) {
+  return registerRoomContextRuntime(editor, {
+    baseUrl: createContextBaseUrlFromRoomUri(collaboration.roomUri),
+    roomId: collaboration.roomId,
+    source: {
+      deviceId: collaboration.deviceId,
+      sessionId: collaboration.sessionId,
+      tabId: collaboration.tabId
+    }
+  });
 }
 
 function CanvasShellFrame({

@@ -1,9 +1,45 @@
 # mate
 
-Welcome to your new [Mastra](https://mastra.ai/) project! We're excited to see what you'll build.
+`apps/mate` is the room-aware AI coworker boundary for Production Spec Graph.
+It consumes the shared canvas context feed from `@production-spec-graph/shared`,
+separates raw whiteboard observations from inferred intent, detects stale
+snapshot assumptions, and returns deterministic `agent-output.v1` data for local
+validation. Current outputs include non-mutating suggestions/questions and typed
+canvas action proposals that require explicit acceptance and are not applied
+automatically.
 
-## Getting Started
+The current implementation is intentionally credential-free for quality gates.
+It does not call a live model and does not mutate the tldraw canvas.
 
+## Local Commands
+
+Run deterministic tests:
+
+```shell
+pnpm --filter mate test
+```
+
+Run typecheck/build:
+
+```shell
+pnpm --filter mate typecheck
+pnpm --filter mate build
+```
+
+Run the room context smoke:
+
+```shell
+pnpm --filter mate smoke
+```
+
+The smoke command constructs a sample room context feed, prepares a mate turn,
+and validates that the result includes canvas observations, inferred intent,
+freshness/staleness metadata, process-local memory diagnostics, and
+non-mutating output.
+
+## Mastra Scaffold
+
+The Mastra scaffold remains available for later model integration experiments.
 Start the development server:
 
 ```shell

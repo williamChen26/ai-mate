@@ -39,6 +39,9 @@ try {
     throw new Error("Expected both smoke sockets to share one room.");
   }
 
+  const readyWithRoom = await readJson(new URL("/ready", base));
+  assertAgentLifecycleReady(readyWithRoom);
+
   const invalid = await openSocket(
     new URL(`${config.syncRoute}/bad%20room?sessionId=session:bad`, base)
   );
@@ -55,6 +58,7 @@ try {
         ready: "/ready",
         syncRoute: `${config.syncRoute}/:roomId?sessionId=:sessionId`,
         roomStats: registry.getStats(),
+        agentLifecycle: registry.getAgentLifecycleDiagnostics(),
         storage: "process-local-memory"
       },
       null,
@@ -70,6 +74,48 @@ async function assertHttpOk(url: URL): Promise<void> {
   if (!response.ok) {
     throw new Error(`${url.pathname} returned ${response.status}`);
   }
+}
+
+async function readJson(url: URL): Promise<unknown> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${url.pathname} returned ${response.status}`);
+  }
+  return response.json();
+}
+
+function assertAgentLifecycleReady(value: unknown): void {
+  if (!isRecord(value)) {
+    throw new Error("Expected /ready to return an object.");
+  }
+  const agentLifecycle = value.agentLifecycle;
+  if (!isRecord(agentLifecycle)) {
+    throw new Error("Expected /ready to include agentLifecycle diagnostics.");
+  }
+  if (agentLifecycle.roomCount !== 1) {
+    throw new Error("Expected agentLifecycle diagnostics for one room.");
+  }
+  if (!Array.isArray(agentLifecycle.rooms)) {
+    throw new Error("Expected agentLifecycle.rooms to be an array.");
+  }
+  const alpha = agentLifecycle.rooms.find(
+    (room) => isRecord(room) && room.roomId === "alpha"
+  );
+  if (!isRecord(alpha)) {
+    throw new Error("Expected agentLifecycle diagnostics for room alpha.");
+  }
+  if (alpha.state !== "unavailable") {
+    throw new Error(
+      `Expected default mate lifecycle to be unavailable, received ${String(alpha.state)}.`
+    );
+  }
+  if (typeof alpha.agentSessionId !== "string") {
+    throw new Error("Expected room alpha to include an agent session id.");
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function openSocket(url: URL): Promise<WebSocket> {

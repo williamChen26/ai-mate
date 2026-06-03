@@ -3,11 +3,24 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "exports": {
+    "./context": {
+      "types": "./src/context/mate-turn.ts",
+      "import": "./dist/context/mate-turn.js"
+    },
+    "./memory": {
+      "types": "./src/context/room-memory.ts",
+      "import": "./dist/context/room-memory.js"
+    }
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "dev": "mastra dev",
-    "build": "mastra build",
-    "start": "mastra start"
+    "build": "tsc -p tsconfig.build.json",
+    "build:mastra": "mastra build",
+    "start": "mastra start",
+    "smoke": "pnpm run build && node dist/scripts/smoke-mate-context.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +30,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@production-spec-graph/shared": "workspace:*",
     "@mastra/core": "^1.37.1",
     "@mastra/duckdb": "^1.4.0",
     "@mastra/evals": "^1.2.3",
@@ -29,6 +43,7 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "mastra": "^1.10.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^2.1.9"
   }
 }

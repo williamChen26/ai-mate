@@ -216,6 +216,92 @@ select {
   inset: 0;
 }
 
+.canvas-shell__mate-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  display: grid;
+  gap: 8px;
+  width: min(380px, calc(100% - 24px));
+  max-height: min(46vh, 420px);
+  padding: 10px;
+  border: 1px solid #cbd3ca;
+  border-radius: 8px;
+  background: rgb(251 252 248 / 94%);
+  box-shadow: 0 12px 30px rgb(29 37 34 / 12%);
+}
+
+.canvas-shell__mate-form {
+  display: grid;
+  gap: 8px;
+}
+
+.canvas-shell__mate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #34443d;
+  font-size: 12px;
+}
+
+.canvas-shell__mate-row strong {
+  color: #1d2522;
+}
+
+.canvas-shell__mate-panel textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  border: 1px solid #cbd3ca;
+  border-radius: 6px;
+  padding: 8px;
+  background: #ffffff;
+  color: #1d2522;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.canvas-shell__mate-panel button {
+  min-height: 28px;
+  border: 1px solid #1d2522;
+  border-radius: 6px;
+  background: #1d2522;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.canvas-shell__mate-panel button:disabled {
+  border-color: #cbd3ca;
+  background: #eef1ec;
+  color: #839087;
+  cursor: wait;
+}
+
+.canvas-shell__mate-raw,
+.canvas-shell__mate-error {
+  min-height: 0;
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid #d9ded6;
+  border-radius: 6px;
+  padding: 8px;
+  background: #ffffff;
+  color: #1d2522;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.canvas-shell__mate-error {
+  border-color: #d08a8a;
+  background: #fff0f0;
+  color: #7d1f1f;
+}
+
 .canvas-shell__error {
   display: grid;
   gap: 8px;

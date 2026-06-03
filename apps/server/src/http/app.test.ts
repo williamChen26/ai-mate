@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CANVAS_CONTEXT_SCHEMA_VERSION } from "@production-spec-graph/shared";
 
 import { loadServerConfig } from "../config.js";
 import { createServerApp } from "./app.js";
@@ -25,6 +26,7 @@ describe("server app", () => {
       ok: true,
       ready: true,
       rooms: { roomCount: 0, roomIds: [] },
+      agentLifecycle: { roomCount: 0, rooms: [] },
       storage: { durable: false }
     });
 
@@ -48,6 +50,20 @@ describe("server app", () => {
       roomIds: ["alpha"]
     });
 
+    const ready = await app.inject({ method: "GET", url: "/ready" });
+    expect(ready.json()).toMatchObject({
+      agentLifecycle: {
+        roomCount: 1,
+        rooms: [
+          {
+            roomId: "alpha",
+            state: "unavailable",
+            unavailableReason: "mate adapter is not configured"
+          }
+        ]
+      }
+    });
+
     first.close();
     second.close();
     await app.close();
@@ -65,6 +81,448 @@ describe("server app", () => {
     expect(registry.getStats()).toEqual({ roomCount: 0, roomIds: [] });
 
     socket.close();
+    await app.close();
+  });
+
+  it("accepts room context snapshots and operation events through diagnostics endpoints", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    const snapshot = {
+      schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+      roomId: "alpha",
+      source: {
+        kind: "web",
+        deviceId: "device:alpha",
+        sessionId: "device:alpha:tab:one",
+        tabId: "tab:one",
+        capturedAt: "2026-06-03T00:00:00.000Z"
+      },
+      document: {
+        shapeCount: 0,
+        shapes: []
+      },
+      selection: {
+        selectedShapeIds: []
+      },
+      viewport: {
+        pageBounds: { x: 0, y: 0, w: 800, h: 600 },
+        zoom: 1
+      },
+      freshness: {
+        snapshotVersion: 1,
+        eventVersionAtSnapshot: 0
+      }
+    };
+
+    const snapshotResponse = await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/snapshot",
+      payload: snapshot
+    });
+    const eventResponse = await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/events",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        eventId: "event:1",
+        eventVersion: 1,
+        kind: "selection-change",
+        source: snapshot.source,
+        occurredAt: "2026-06-03T00:00:01.000Z",
+        selectedShapeIds: []
+      }
+    });
+    const contextResponse = await app.inject({
+      method: "GET",
+      url: "/rooms/alpha/context"
+    });
+
+    expect(snapshotResponse.statusCode).toBe(200);
+    expect(eventResponse.statusCode).toBe(200);
+    expect(contextResponse.json()).toMatchObject({
+      ok: true,
+      context: {
+        roomId: "alpha",
+        latestSnapshot: { roomId: "alpha" },
+        recentEvents: [{ eventId: "event:1" }],
+        freshness: {
+          snapshotVersion: 1,
+          eventVersion: 1,
+          changedSinceSnapshot: true
+        }
+      }
+    });
+
+    await app.close();
+  });
+
+  it("allows configured web origins to publish room context", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/rooms/alpha/context/snapshot",
+      headers: {
+        origin: "http://127.0.0.1:3000",
+        "access-control-request-method": "POST"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://127.0.0.1:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toContain("POST");
+
+    await app.close();
+  });
+
+  it("rejects cross-room context payloads without mutating diagnostics", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/rooms/beta/context/snapshot",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-03T00:00:00.000Z"
+        },
+        document: { shapeCount: 0, shapes: [] },
+        selection: { selectedShapeIds: [] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+      }
+    });
+    const contextResponse = await app.inject({
+      method: "GET",
+      url: "/rooms/beta/context"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: { code: "ROOM_MISMATCH" }
+    });
+    expect(contextResponse.json()).toMatchObject({
+      ok: true,
+      context: {
+        roomId: "beta",
+        latestSnapshot: null,
+        recentEvents: []
+      }
+    });
+
+    await app.close();
+  });
+
+  it("returns explicit diagnostics for quiet rooms", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/rooms/quiet-room/diagnostics"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      diagnostics: {
+        roomId: "quiet-room",
+        room: {
+          active: true,
+          knownRoomIds: ["quiet-room"]
+        },
+        agentLifecycle: {
+          roomId: "quiet-room",
+          state: "unavailable",
+          unavailableReason: "mate adapter is not configured"
+        },
+        context: {
+          hasSnapshot: false,
+          snapshotShapeCount: 0,
+          recentEventCount: 0,
+          freshness: {
+            snapshotVersion: 0,
+            eventVersion: 0,
+            changedSinceSnapshot: false
+          }
+        },
+        mate: {
+          hasResponse: false,
+          lastResponse: null
+        },
+        storage: {
+          kind: "process-local-memory",
+          durable: false
+        }
+      }
+    });
+
+    await app.close();
+  });
+
+  it("accepts room-scoped mate messages and returns raw mate turn data", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/snapshot",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-03T00:00:00.000Z"
+        },
+        document: {
+          shapeCount: 1,
+          shapes: [
+            {
+              id: "shape:one",
+              type: "text",
+              text: "Launch plan"
+            }
+          ]
+        },
+        selection: { selectedShapeIds: ["shape:one"] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/mate/messages",
+      payload: {
+        message: "Can you organize this?",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          sentAt: "2026-06-03T00:00:01.000Z"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      response: {
+        roomId: "alpha",
+        message: { length: 22 },
+        mate: {
+          roomId: "alpha",
+          output: { nonMutating: true },
+          observations: {
+            shapeCount: 1,
+            textSnippets: ["Launch plan"]
+          },
+          interpretation: {
+            intent: expect.stringMatching(/organize/i)
+          }
+        }
+      }
+    });
+
+    const diagnostics = await app.inject({
+      method: "GET",
+      url: "/rooms/alpha/mate"
+    });
+    expect(diagnostics.json()).toMatchObject({
+      ok: true,
+      response: {
+        roomId: "alpha",
+        mate: { roomId: "alpha" }
+      }
+    });
+
+    await app.close();
+  });
+
+  it("summarizes active room context, degraded lifecycle, and latest mate output in diagnostics", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/snapshot",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-03T00:00:00.000Z"
+        },
+        document: {
+          shapeCount: 1,
+          shapes: [
+            {
+              id: "shape:one",
+              type: "text",
+              text: "Launch plan"
+            }
+          ]
+        },
+        selection: { selectedShapeIds: ["shape:one"] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+      }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/events",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        eventId: "event:1",
+        eventVersion: 1,
+        kind: "chat-boundary",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-03T00:00:01.000Z"
+        },
+        occurredAt: "2026-06-03T00:00:01.000Z",
+        messageLength: 26
+      }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/mate/messages",
+      payload: {
+        message: "Add a note for follow up",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          sentAt: "2026-06-03T00:00:02.000Z"
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/rooms/alpha/diagnostics"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      diagnostics: {
+        roomId: "alpha",
+        room: {
+          active: true,
+          knownRoomIds: ["alpha"]
+        },
+        agentLifecycle: {
+          roomId: "alpha",
+          state: "unavailable",
+          unavailableReason: "mate adapter is not configured"
+        },
+        context: {
+          hasSnapshot: true,
+          snapshotShapeCount: 1,
+          recentEventCount: 1,
+          latestSnapshot: {
+            source: {
+              sessionId: "device:alpha:tab:one"
+            }
+          },
+          freshness: {
+            snapshotVersion: 1,
+            eventVersion: 1,
+            changedSinceSnapshot: true
+          }
+        },
+        mate: {
+          hasResponse: true,
+          outputKind: "canvas-action-proposal",
+          proposalStatus: "blocked",
+          outputValidation: {
+            ok: true,
+            status: "blocked",
+            applied: false
+          },
+          lastResponse: {
+            roomId: "alpha",
+            mate: {
+              output: {
+                kind: "canvas-action-proposal"
+              }
+            }
+          }
+        },
+        storage: {
+          kind: "process-local-memory",
+          durable: false
+        }
+      }
+    });
+
+    await app.close();
+  });
+
+  it("rejects invalid mate message payloads", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/mate/messages",
+      payload: {
+        message: "",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          sentAt: "2026-06-03T00:00:01.000Z"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_MATE_MESSAGE" }
+    });
+
     await app.close();
   });
 });

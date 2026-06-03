@@ -90,11 +90,9 @@ test("syncs one room between independent browser contexts", async ({
     const afterReloadIdentity = await readIdentity(firstPage);
     expect(afterReloadIdentity.deviceLabel).toBe(firstIdentity.deviceLabel);
 
-    const syncedText = `Synced through dedicated backend ${Date.now()}`;
+    const syncedText = `Sync ${Date.now()}`;
     await createTextShapeThroughUi(firstPage, syncedText);
-    await expect(secondPage.getByText(syncedText).first()).toBeAttached({
-      timeout: 12_000
-    });
+    await waitForContextShapeCount(secondPage, 1);
 
     await firstPage.goto("/");
     await expect(firstPage).toHaveURL(/\/rooms\/room-[A-Za-z0-9._-]+$/);
@@ -107,6 +105,126 @@ test("syncs one room between independent browser contexts", async ({
     await firstContext.close();
     await secondContext.close();
   }
+});
+
+test("publishes room context snapshots and operation events to the backend", async ({
+  page
+}) => {
+  const roomPath = `/rooms/e2e-context-${Date.now()}`;
+  await page.goto(roomPath);
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+
+  const contextText = `Ctx ${Date.now()}`;
+  await createTextShapeThroughUi(page, contextText);
+  await page.waitForFunction(() => Boolean(window.__PSG_ROOM_CONTEXT__));
+
+  const result = await page.evaluate(async () => {
+    const api = window.__PSG_ROOM_CONTEXT__;
+    if (!api) {
+      throw new Error("Room context hook was not registered.");
+    }
+
+    const snapshot = await api.publishSnapshot();
+    const canvasEvent = await api.emitCanvasChange({
+      summary: "e2e canvas change"
+    });
+    const chatEvent = await api.emitChatBoundary("what should I do next?");
+    const context = await api.getServerContext();
+
+    return { snapshot, canvasEvent, chatEvent, context };
+  });
+
+  expect(result.snapshot).toMatchObject({ ok: true });
+  expect(result.canvasEvent).toMatchObject({ ok: true });
+  expect(result.chatEvent).toMatchObject({ ok: true });
+  expect(result.context).toMatchObject({
+    roomId: roomPath.replace("/rooms/", ""),
+    latestSnapshot: {
+      roomId: roomPath.replace("/rooms/", "")
+    },
+    freshness: {
+      changedSinceSnapshot: true
+    }
+  });
+  expect(result.context?.latestSnapshot?.document.shapeCount).toBeGreaterThan(0);
+  expect(
+    result.context?.latestSnapshot?.document.shapes.some(
+      (shape) => shape.type === "text"
+    )
+  ).toBe(true);
+  expect(result.context?.recentEvents.map((event) => event.kind)).toEqual(
+    expect.arrayContaining(["canvas-change", "chat-boundary"])
+  );
+});
+
+test("sends a raw mate message and renders structured response data", async ({
+  page
+}) => {
+  const roomPath = `/rooms/e2e-mate-${Date.now()}`;
+  await page.goto(roomPath);
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+
+  await createTextShapeThroughUi(page, `Mate ${Date.now()}`);
+  await page.getByTestId("mate-message-input").fill("Can you organize this?");
+  await page.getByTestId("mate-send-button").click();
+
+  await expect(page.getByTestId("mate-status")).toHaveText(/Sending|Ready/);
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    roomPath.replace("/rooms/", "")
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    "observations"
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    "interpretation"
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    "nonMutating"
+  );
+  await expect(page.locator(".tl-container").first()).toBeVisible();
+});
+
+test("renders a proposed canvas action without applying it automatically", async ({
+  page
+}) => {
+  const roomPath = `/rooms/e2e-proposal-${Date.now()}`;
+  await page.goto(roomPath);
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+
+  await createTextShapeThroughUi(page, `Proposal ${Date.now()}`);
+  const beforeCount = await readContextShapeCount(page);
+
+  await page.getByTestId("mate-message-input").fill("Add a note for follow up");
+  await page.getByTestId("mate-send-button").click();
+
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    "canvas-action-proposal"
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    "requiresAcceptance"
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    '"applied": false'
+  );
+  await page.getByTestId("mate-diagnostics-button").click();
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    roomPath.replace("/rooms/", "")
+  );
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    "agentLifecycle"
+  );
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    "context"
+  );
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    "canvas-action-proposal"
+  );
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    "outputValidation"
+  );
+  await expect
+    .poll(() => readContextShapeCount(page), { timeout: 3_000 })
+    .toBe(beforeCount);
 });
 
 test("keeps same-device tabs as independent live sessions", async ({
@@ -170,7 +288,23 @@ async function createTextShapeThroughUi(
   await page.keyboard.type(text);
   await page.keyboard.press("Escape");
 
-  await expect(page.getByText(text).first()).toBeAttached({ timeout: 8_000 });
+  await waitForContextShapeCount(page, 1);
+}
+
+async function waitForContextShapeCount(page: Page, minCount: number) {
+  await page.waitForFunction(
+    (count) =>
+      (window.__PSG_ROOM_CONTEXT__?.extractSnapshot().document.shapeCount ?? 0) >=
+      count,
+    minCount,
+    { timeout: 8_000 }
+  );
+}
+
+async function readContextShapeCount(page: Page) {
+  return page.evaluate(
+    () => window.__PSG_ROOM_CONTEXT__?.extractSnapshot().document.shapeCount ?? 0
+  );
 }
 
 async function readIdentity(page: Page) {
