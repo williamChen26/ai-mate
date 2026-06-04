@@ -5,7 +5,7 @@ import {
   buildSyncSessionId,
   DEFAULT_SYNC_SERVER_URL,
   resolveSyncConfig
-} from "./sync-config";
+} from "../sync-config";
 
 const deviceId = "psg-device-11111111-1111-4111-8111-111111111111";
 const tabId = "tab-22222222-2222-4222-8222-222222222222";

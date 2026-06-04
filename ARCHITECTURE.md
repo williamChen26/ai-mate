@@ -12,8 +12,8 @@ The implemented workspace packages are:
 | --- | --- |
 | `packages/shared` | Zod-backed shared TypeScript contracts for AI input-side room context, canvas snapshots, operation events, and freshness metadata. |
 | `apps/mate` | Room-aware AI coworker boundary that ingests shared canvas context feeds, separates observation from interpretation, detects stale context, and returns deterministic non-mutating suggestions/questions for local validation. |
-| `apps/web` | Next.js app that renders the full-screen tldraw canvas, owns route-backed room entry, creates stable browser/device identity, connects to the sync backend with `@tldraw/sync@5.0.1`, publishes room context, and exposes a minimal raw AI message/result surface. |
-| `apps/server` | Fastify Node service that exposes health/readiness endpoints, room context endpoints, room mate message endpoints, and a raw WebSocket tldraw sync route using `@tldraw/sync-core@5.0.1`. |
+| `apps/web` | Next.js app that renders the full-screen tldraw canvas, owns route-backed room entry, creates stable browser/device identity, connects to the sync backend with `@tldraw/sync@5.0.1`, publishes room context, and exposes minimal raw AI message/result/diagnostics surfaces. |
+| `apps/server` | Fastify Node service that exposes health/readiness endpoints, room context endpoints, room mate message endpoints, room diagnostics, and a raw WebSocket tldraw sync route using `@tldraw/sync-core@5.0.1`. |
 
 ## Collaboration Flow
 
@@ -50,6 +50,7 @@ Default local endpoints:
 | `POST http://127.0.0.1:3001/rooms/:roomId/context/events` | Accepts Zod-validated normalized user operation events for the room. |
 | `GET http://127.0.0.1:3001/rooms/:roomId/mate` | Returns the latest raw mate turn response for the room, if one exists. |
 | `POST http://127.0.0.1:3001/rooms/:roomId/mate/messages` | Accepts a room-scoped user message, reads the latest context feed, invokes deterministic `apps/mate`, and returns raw structured mate result data. |
+| `GET http://127.0.0.1:3001/rooms/:roomId/diagnostics` | Returns process-local room diagnostics that aggregate room presence, agent lifecycle, context freshness, recent event counts, latest mate response/proposal validation, and non-durable storage notes. |
 | `ws://127.0.0.1:3001/sync/:roomId` | Raw tldraw sync WebSocket route. |
 
 Backend configuration:
@@ -126,6 +127,27 @@ The first interactive AI path is intentionally logic-first:
 This path proves the current conversation/data flow without committing to final
 chat UI design.
 
+## Runtime Diagnostics
+
+The room diagnostics path is developer-facing and raw-data oriented:
+
+```sh
+curl -fsS http://127.0.0.1:3001/rooms/<room-id>/diagnostics
+```
+
+Diagnostics are scoped to one room and aggregate the current in-process state:
+
+- sync room presence and known room ids
+- room-scoped mate lifecycle state, including degraded `unavailable` reasons
+- context freshness, latest snapshot summary, and recent operation event count
+- latest mate response, output kind, proposal status, and validation status
+- explicit process-local/non-durable storage notes
+
+The web `Mate raw` panel includes a `Diagnostics` trigger that renders the same
+response as raw JSON. It is not a product dashboard; it exists to validate the
+whiteboard -> server -> mate -> web loop while the UI remains intentionally
+unpolished.
+
 ## Agent Output And Proposal Safety
 
 The shared package defines `agent-output.v1` for:
@@ -186,24 +208,26 @@ front-end editor access.
 
 The current AI surface is a minimal raw-data panel in the room canvas. It is
 secondary to the tldraw workspace and exists to validate the web -> server ->
-mate -> web path before product styling.
+mate -> web path before product styling. The same panel can fetch raw room
+diagnostics after a message to inspect the latest lifecycle, context, output,
+and proposal validation state.
 
-## Status And Recovery
+## Status And Raw Errors
 
-The web UI shows compact collaboration status in the top bar:
+The web app intentionally supports one canvas path: the collaborative tldraw
+room connected to the dedicated backend. It does not expose local canvas modes,
+hosted demo fallback, or backend recovery UX in this phase.
+
+The web UI shows only these sync states:
 
 - `Connecting sync`
 - `Backend sync`
-- `Sync reconnecting`
-- `Backend unavailable`
-- `Local sync cache`
-- `Sync error`
-- `Sync configuration error`
+- `Sync raw error`
 
-Backend unavailable and backend restart behavior is recoverable from the UI.
-Because the backend storage is process-local, a restart may reset room state.
-The app keeps the same route and configured backend URI; it does not silently
-switch to tldraw's hosted demo server.
+Only `Backend sync` mounts the main tldraw canvas. Loading shows raw connection
+state, and configuration/sync/data failures render raw JSON error data directly.
+This keeps the current phase logic-first and avoids UI branches that make the
+AI/context path harder to reason about.
 
 ## tldraw Sync Compatibility
 
@@ -252,8 +276,7 @@ pnpm check
 ```
 
 This runs backend tests, backend typecheck/build/smoke, web unit tests, web
-typecheck/build, integrated Playwright E2E, and backend recovery smoke
-sequentially.
+typecheck/build, and integrated Playwright E2E sequentially.
 
 Focused commands:
 
@@ -263,7 +286,7 @@ pnpm --filter @production-spec-graph/server smoke
 pnpm --filter mate smoke
 pnpm --filter @production-spec-graph/web dev
 pnpm --filter @production-spec-graph/web test:e2e
-pnpm --filter @production-spec-graph/web test:recovery
+curl -fsS http://127.0.0.1:3001/rooms/<room-id>/diagnostics
 ```
 
 Manual local inspection:
@@ -273,8 +296,11 @@ Manual local inspection:
 3. Confirm it redirects to `/rooms/<safe-id>`.
 4. Open that room URL in another browser profile/context.
 5. Create a simple tldraw shape and verify it appears in both clients.
-6. Stop/restart the backend and confirm reconnect/reset status appears without
-   leaving the room route.
+6. Send a message in the raw Mate panel, click `Diagnostics`, and confirm the
+   raw JSON includes room id, agent lifecycle, context freshness, latest mate
+   output/proposal validation, and process-local storage notes.
+7. Stop the backend and confirm the web app shows raw sync error data instead
+   of switching to another canvas mode.
 
 ## Deferred Production Work
 

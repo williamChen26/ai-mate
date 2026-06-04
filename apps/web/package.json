@@ -8,8 +8,7 @@
     "dev": "NEXT_PUBLIC_PSG_SYNC_SERVER_URL=http://127.0.0.1:3001 next dev --hostname 127.0.0.1",
     "start": "next start",
     "test:e2e": "playwright test",
-    "test:recovery": "node scripts/smoke-sync-recovery.mjs",
-    "test:unit": "vitest run src/**/*.test.ts",
+    "test:unit": "vitest run src/lib/_spec",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

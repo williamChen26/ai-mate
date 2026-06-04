@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildRoomShareUrl } from "./room-share";
+import { buildRoomShareUrl } from "../room-share";
 
 describe("room share url", () => {
   it("builds a canonical room URL from an origin and validated room id", () => {

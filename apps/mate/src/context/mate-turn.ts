@@ -12,8 +12,15 @@ import {
   type RoomMemoryStore
 } from "./room-memory.js";
 
+/**
+ * 确定性 mate turn 结果协议的版本标识。
+ */
 export const MATE_TURN_SCHEMA_VERSION = "mate-turn.v1";
 
+/**
+ * 单次 mate turn 的输入协议。context feed 必须属于同一个 room，避免 mate
+ * 意外跨 room 推理。
+ */
 export const mateTurnRequestSchema = z
   .object({
     roomId: roomIdSchema,
@@ -26,6 +33,10 @@ export const mateTurnRequestSchema = z
     path: ["context", "roomId"]
   });
 
+/**
+ * 单次 mate turn 的输出协议。它把原始 observations、推断 interpretation、
+ * uncertainty、AI output 和 memory diagnostics 分开，方便调用方检查响应来源。
+ */
 export const mateTurnResultSchema = z.object({
   schemaVersion: z.literal(MATE_TURN_SCHEMA_VERSION),
   roomId: roomIdSchema,
@@ -61,12 +72,22 @@ export const mateTurnResultSchema = z.object({
 export type MateTurnRequest = z.input<typeof mateTurnRequestSchema>;
 export type MateTurnResult = z.infer<typeof mateTurnResultSchema>;
 
+/**
+ * 测试和 smoke 脚本用来生成确定性 turn 的运行时注入点。
+ */
 export type PrepareMateTurnOptions = {
   memoryStore?: RoomMemoryStore;
   now?: () => string;
   turnId?: () => string;
 };
 
+/**
+ * 根据用户消息和 room context feed 准备一次确定性 mate turn。
+ *
+ * 这是当前 AI 同事边界。它暂时不调用 LLM，而是校验输入、从画布提取事实观察、
+ * 推断简单意图、选择 typed output、记录有界 memory，并用 `mateTurnResultSchema`
+ * 校验最终结果。
+ */
 export function prepareMateTurn(
   input: MateTurnRequest,
   {
@@ -117,6 +138,10 @@ export function prepareMateTurn(
   });
 }
 
+/**
+ * 把最新 room context feed 转成事实 observations。这个函数刻意不做解释，
+ * 让后续逻辑能区分 mate 看到的事实和 mate 推断出的含义。
+ */
 function observeRoom(context: z.infer<typeof roomContextFeedSchema>) {
   const shapes = context.latestSnapshot?.document.shapes ?? [];
   return {
@@ -132,6 +157,9 @@ function observeRoom(context: z.infer<typeof roomContextFeedSchema>) {
   };
 }
 
+/**
+ * 描述当前 turn 可能不完整或不适合直接行动的原因。
+ */
 function describeUncertainty(
   request: z.infer<typeof mateTurnRequestSchema>,
   observations: ReturnType<typeof observeRoom>,
@@ -150,6 +178,9 @@ function describeUncertainty(
   return notes;
 }
 
+/**
+ * 根据消息文本、近期 room operations、selection 焦点和可见画布文本推断轻量用户意图。
+ */
 function inferIntent(
   request: z.infer<typeof mateTurnRequestSchema>,
   observations: ReturnType<typeof observeRoom>,
@@ -210,6 +241,12 @@ function inferIntent(
   };
 }
 
+/**
+ * 为当前 turn 选择结构化 AI 输出。
+ *
+ * 输出保持非变更。即使是 canvas action proposal，也只是纯数据；未来 executor
+ * 执行前必须先经过 server/web 安全路径。
+ */
 function chooseOutput(
   request: z.infer<typeof mateTurnRequestSchema>,
   observations: ReturnType<typeof observeRoom>,
@@ -308,12 +345,18 @@ function chooseOutput(
   };
 }
 
+/**
+ * 识别应该转成 typed create-text-note proposal 的用户请求。
+ */
 function isCreateNoteRequest(message: string | undefined) {
   return Boolean(
     message && /add|create|make|新增|添加|创建/i.test(message) && /note|text|节点|便签|备注/i.test(message)
   );
 }
 
+/**
+ * 根据用户消息或当前画布文本片段，为 proposed note 生成有边界的文本。
+ */
 function createProposedNoteText(
   message: string | undefined,
   observations: ReturnType<typeof observeRoom>
@@ -326,6 +369,9 @@ function createProposedNoteText(
     : "Follow up note";
 }
 
+/**
+ * 生成后续 diagnostics 保留的小型 memory 摘要。
+ */
 function summarizeTurn(
   observations: ReturnType<typeof observeRoom>,
   interpretation: ReturnType<typeof inferIntent>
@@ -333,6 +379,9 @@ function summarizeTurn(
   return `${observations.shapeCount} shapes; intent: ${interpretation.intent}`;
 }
 
+/**
+ * 读取某个 room 的 memory diagnostics，同时不暴露可变 memory 状态。
+ */
 export function getMemoryDiagnostics(
   memoryStore: RoomMemoryStore,
   roomId: string

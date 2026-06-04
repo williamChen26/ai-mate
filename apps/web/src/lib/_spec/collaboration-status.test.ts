@@ -1,33 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { createCollaborationStatusView } from "./collaboration-status";
+import { createCollaborationStatusView } from "../collaboration-status";
 
 describe("collaboration status", () => {
-  it("maps remote loading before timeout to a compact connecting state", () => {
+  it("maps loading to the only non-error pending state", () => {
     expect(
       createCollaborationStatusView({ storeStatus: "loading" })
     ).toMatchObject({
       label: "Connecting sync",
       state: "connecting",
-      recoverable: true
+      raw: {
+        storeStatus: "loading",
+        connectionStatus: null
+      }
     });
   });
 
-  it("maps long loading to a visible backend unavailable state", () => {
-    const view = createCollaborationStatusView({
-      storeStatus: "loading",
-      timedOut: true
-    });
-
-    expect(view).toMatchObject({
-      label: "Backend unavailable",
-      state: "offline",
-      recoverable: true
-    });
-    expect(view.detail).toContain("process-local");
-  });
-
-  it("maps online remote sync to the ready state", () => {
+  it("maps online remote sync to the only ready canvas state", () => {
     expect(
       createCollaborationStatusView({
         storeStatus: "synced-remote",
@@ -36,50 +25,60 @@ describe("collaboration status", () => {
     ).toMatchObject({
       label: "Backend sync",
       state: "online",
-      recoverable: false
+      raw: {
+        storeStatus: "synced-remote",
+        connectionStatus: "online"
+      }
     });
   });
 
-  it("maps offline remote sync to a reconnecting state", () => {
+  it("maps offline remote sync to a raw error", () => {
     const view = createCollaborationStatusView({
       storeStatus: "synced-remote",
       connectionStatus: "offline"
     });
 
     expect(view).toMatchObject({
-      label: "Sync reconnecting",
-      state: "offline",
-      recoverable: true
+      label: "Sync raw error",
+      state: "error",
+      raw: {
+        storeStatus: "synced-remote",
+        connectionStatus: "offline"
+      }
     });
-    expect(view.detail).toContain("in-memory room may reset");
   });
 
-  it("maps local cache and not-synced states without pretending they are online", () => {
+  it("maps local cache and not-synced states to raw errors", () => {
     expect(
       createCollaborationStatusView({ storeStatus: "synced-local" })
     ).toMatchObject({
-      label: "Local sync cache",
-      state: "local"
+      label: "Sync raw error",
+      state: "error",
+      raw: { storeStatus: "synced-local" }
     });
     expect(
       createCollaborationStatusView({ storeStatus: "not-synced" })
     ).toMatchObject({
-      label: "Sync not connected",
-      state: "offline"
+      label: "Sync raw error",
+      state: "error",
+      raw: { storeStatus: "not-synced" }
     });
   });
 
-  it("maps sync and configuration errors to recoverable error states", () => {
+  it("maps sync and configuration errors to raw error states", () => {
     expect(
       createCollaborationStatusView({
         storeStatus: "error",
         errorMessage: "WebSocket closed"
       })
     ).toMatchObject({
-      label: "Sync error",
+      label: "Sync raw error",
       state: "error",
       detail: "WebSocket closed",
-      recoverable: true
+      raw: {
+        storeStatus: "error",
+        errorMessage: "WebSocket closed"
+      }
     });
 
     expect(
@@ -88,9 +87,12 @@ describe("collaboration status", () => {
         errorMessage: "Sync server URL must be configured explicitly."
       })
     ).toMatchObject({
-      label: "Sync configuration error",
+      label: "Sync raw error",
       state: "error",
-      recoverable: true
+      raw: {
+        storeStatus: "configuration-error",
+        errorMessage: "Sync server URL must be configured explicitly."
+      }
     });
   });
 });

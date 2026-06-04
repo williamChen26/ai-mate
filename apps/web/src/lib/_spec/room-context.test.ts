@@ -6,7 +6,7 @@ import {
   createChatBoundaryOperationEvent,
   createRoomContextPublisher,
   extractCanvasSnapshotFromEditor
-} from "./room-context.js";
+} from "../room-context.js";
 
 const source = {
   deviceId: "device:alpha",

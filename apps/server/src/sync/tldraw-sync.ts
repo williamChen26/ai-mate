@@ -9,16 +9,26 @@ import { isOriginAllowed, type ServerConfig } from "../config.js";
 import { parseRoomId, parseSessionId } from "../room-id.js";
 import type { RoomRegistry } from "./room-registry.js";
 
+/**
+ * sync route 收到的原始 WebSocket 连接元数据。
+ */
 export type SyncConnectionRequest = {
   roomId: unknown;
   sessionId: unknown;
   origin: string | undefined;
 };
 
+/**
+ * WebSocket 接受/拒绝逻辑的结构化结果，方便测试。
+ */
 export type SyncConnectionResult =
   | { ok: true; roomId: string; sessionId: string }
   | { ok: false; reason: string };
 
+/**
+ * 校验 origin、room id 和 session id，然后把原始 WebSocket 接到 room 的
+ * tldraw `TLSocketRoom` 上。
+ */
 export function attachTldrawSyncSocket(
   socket: WebSocket,
   request: SyncConnectionRequest,
@@ -51,10 +61,17 @@ export function attachTldrawSyncSocket(
   return { ok: true, roomId: roomId.value, sessionId: sessionId.value };
 }
 
+/**
+ * 使用 tldraw 期望的错误 close code 关闭被拒绝的 sync socket。
+ */
 function closeSocket(socket: WebSocket, reason: string): void {
   socket.close(TLSyncErrorCloseEventCode, reason);
 }
 
+/**
+ * 把 `ws` WebSocket events 适配为 `@tldraw/sync-core` 期望的最小浏览器式
+ * socket surface。
+ */
 function toMinimalWebSocket(socket: WebSocket): WebSocketMinimal {
   const listeners = new Map<
     (event: unknown) => void,
@@ -93,6 +110,10 @@ function toMinimalWebSocket(socket: WebSocket): WebSocketMinimal {
   };
 }
 
+/**
+ * 将 Node `ws` 的多种 message payload 标准化成 tldraw sync core listener
+ * 可接受的数据形态。
+ */
 function normalizeMessageData(data: unknown): string | ArrayBufferLike | ArrayBufferView {
   if (typeof data === "string") {
     return data;

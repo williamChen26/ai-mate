@@ -7,13 +7,22 @@ import {
   type RoomAgentLifecycleRegistry
 } from "./room-agent-lifecycle.js";
 
+/**
+ * `@tldraw/sync-core` 拥有的运行时 room 对象。
+ */
 export type SyncRoom = TLSocketRoom;
 
+/**
+ * readiness 和 diagnostics 使用的 process-local room registry 摘要。
+ */
 export type RoomRegistryStats = {
   roomCount: number;
   roomIds: string[];
 };
 
+/**
+ * 创建 tldraw sync rooms，并把它们和 mate lifecycle records 关联起来的 registry API。
+ */
 export type RoomRegistry = {
   getOrCreateRoom: (roomId: string) => SyncRoom;
   getStats: () => RoomRegistryStats;
@@ -22,10 +31,19 @@ export type RoomRegistry = {
   closeAll: () => void;
 };
 
+/**
+ * 构造 room registry 时可选注入的依赖。
+ */
 export type CreateRoomRegistryOptions = {
   agentLifecycle?: RoomAgentLifecycleRegistry;
 };
 
+/**
+ * 创建 process-local tldraw room registry。
+ *
+ * 对某个合法 room id 第一次调用 `getOrCreateRoom` 时，会同时创建 `TLSocketRoom`
+ * 和对应的 mate lifecycle record。
+ */
 export function createRoomRegistry({
   agentLifecycle = createRoomAgentLifecycleRegistry()
 }: CreateRoomRegistryOptions = {}): RoomRegistry {

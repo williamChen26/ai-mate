@@ -265,9 +265,12 @@ test("rejects invalid room routes before sync starts", async ({ page }) => {
   await page.goto("/rooms/%2E%2E%2Fbad");
 
   await expect(page.getByTestId("canvas-shell")).toBeVisible();
-  await expect(page.getByTestId("sync-status")).toHaveText("Invalid room");
+  await expect(page.getByTestId("sync-status")).toHaveText("Sync raw error");
   await expect(page.locator(".canvas-shell__error")).toContainText(
     "Room link is not valid"
+  );
+  await expect(page.locator(".canvas-shell__error")).toContainText(
+    "INVALID_ROOM_ID"
   );
 
   await expect(page.locator(".tl-container")).toHaveCount(0);

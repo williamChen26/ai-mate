@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CANVAS_CONTEXT_SCHEMA_VERSION } from "@production-spec-graph/shared";
 
-import { loadServerConfig } from "../config.js";
-import { createServerApp } from "./app.js";
+import { loadServerConfig } from "../../config.js";
+import { createServerApp } from "../app.js";
 
 describe("server app", () => {
   it("serves deterministic health and readiness responses", async () => {

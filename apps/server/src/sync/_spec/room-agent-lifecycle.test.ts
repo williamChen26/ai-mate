@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createRoomAgentLifecycleRegistry,
   transitionRoomAgentRecord
-} from "./room-agent-lifecycle.js";
+} from "../room-agent-lifecycle.js";
 
 describe("room agent lifecycle", () => {
   it("requests a room-scoped mate lifecycle record with serializable degraded state by default", () => {

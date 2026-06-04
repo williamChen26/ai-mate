@@ -5,7 +5,7 @@ import {
   createRoomId,
   decideRoomRoute,
   isCanonicalRoomPath
-} from "./room-route";
+} from "../room-route";
 
 describe("room route decisions", () => {
   it("generates safe unique room ids", () => {

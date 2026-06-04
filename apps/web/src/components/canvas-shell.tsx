@@ -20,7 +20,6 @@ import {
   Tldraw,
   UserRecordType,
   type Editor,
-  type TLStoreWithStatus,
   type TLUserStore
 } from "tldraw";
 
@@ -46,6 +45,7 @@ import {
   registerRoomContextRuntime
 } from "@/lib/room-context";
 import { createRoomMateClient } from "@/lib/mate-client";
+import { createRoomDiagnosticsClient } from "@/lib/room-diagnostics-client";
 
 type CollaborationState =
   | {
@@ -86,12 +86,10 @@ export function CanvasShell({ roomId }: { roomId: string }) {
           storeStatus: "loading"
         })}
       >
-        <div className="canvas-shell__workspace--message">
-          <div className="canvas-shell__error" role="status">
-            <strong>Preparing collaboration.</strong>
-            <span>Opening the route-backed tldraw sync room.</span>
-          </div>
-        </div>
+        <RawWorkspaceMessage
+          title="Preparing collaborative canvas"
+          value={{ state: "hydrating-client" }}
+        />
       </CanvasShellFrame>
     );
   }
@@ -106,10 +104,11 @@ export function CanvasShell({ roomId }: { roomId: string }) {
       <CanvasShellFrame
         statusView={statusView}
       >
-        <div className="canvas-shell__error" role="alert">
-          <strong>Collaboration is not connected.</strong>
-          <span>{collaboration.error.message}</span>
-        </div>
+        <RawWorkspaceMessage
+          role="alert"
+          title={collaboration.error.message}
+          value={collaboration.error}
+        />
       </CanvasShellFrame>
     );
   }
@@ -119,6 +118,9 @@ export function CanvasShell({ roomId }: { roomId: string }) {
   );
 }
 
+/**
+ * 为已校验的 room 挂载远程 tldraw store，并把 raw Mate 面板放在编辑器旁边。
+ */
 function SyncedCanvasShell({
   collaboration
 }: {
@@ -129,15 +131,52 @@ function SyncedCanvasShell({
     assets: inlineBase64AssetStore,
     users: collaboration.users
   });
-  const loadingTimedOut = useLoadingTimeout(store.status === "loading");
   const statusView = createCollaborationStatusView({
     storeStatus: store.status,
     connectionStatus:
       store.status === "synced-remote" ? store.connectionStatus : undefined,
-    timedOut: loadingTimedOut,
     errorMessage: store.status === "error" ? store.error.message : undefined
   });
   const share = useRoomShare(collaboration.roomId);
+
+  if (statusView.state === "connecting") {
+    return (
+      <CanvasShellFrame
+        statusView={statusView}
+        identity={{
+          color: collaboration.deviceColor,
+          deviceLabel: collaboration.deviceName,
+          sessionLabel: collaboration.sessionLabel
+        }}
+        share={share}
+      >
+        <RawWorkspaceMessage
+          title="Connecting collaborative canvas"
+          value={statusView.raw}
+        />
+      </CanvasShellFrame>
+    );
+  }
+
+  if (statusView.state === "error") {
+    return (
+      <CanvasShellFrame
+        statusView={statusView}
+        identity={{
+          color: collaboration.deviceColor,
+          deviceLabel: collaboration.deviceName,
+          sessionLabel: collaboration.sessionLabel
+        }}
+        share={share}
+      >
+        <RawWorkspaceMessage
+          role="alert"
+          title={statusView.detail}
+          value={statusView.raw}
+        />
+      </CanvasShellFrame>
+    );
+  }
 
   return (
     <CanvasShellFrame
@@ -160,6 +199,13 @@ function SyncedCanvasShell({
   );
 }
 
+/**
+ * 最小 raw AI 面板，用来先验证产品逻辑链路，而不是先做精致聊天 UI。
+ *
+ * 发送时会先发布最新画布 snapshot，再记录 chat-boundary event，然后把用户消息
+ * 发给 server 并渲染 mate 的原始响应。Diagnostics 按钮只读取同一个 room 的
+ * server diagnostics，不会修改画布。
+ */
 function MateRawPanel({
   collaboration
 }: {
@@ -170,6 +216,7 @@ function MateRawPanel({
     "idle"
   );
   const [rawResult, setRawResult] = useState<unknown>(null);
+  const [rawDiagnostics, setRawDiagnostics] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
   const client = useMemo(
     () =>
@@ -181,6 +228,14 @@ function MateRawPanel({
           sessionId: collaboration.sessionId,
           tabId: collaboration.tabId
         }
+      }),
+    [collaboration]
+  );
+  const diagnosticsClient = useMemo(
+    () =>
+      createRoomDiagnosticsClient({
+        baseUrl: createContextBaseUrlFromRoomUri(collaboration.roomUri),
+        roomId: collaboration.roomId
       }),
     [collaboration]
   );
@@ -197,6 +252,8 @@ function MateRawPanel({
     setStatus("sending");
     setError(null);
     setRawResult(null);
+    // 发送 mate 消息前主动刷新一次 AI 可读 snapshot。紧接着写入 chat-boundary
+    // event，所以 server freshness 会把这次聊天边界计为 snapshot 后的新事件。
     await window.__PSG_ROOM_CONTEXT__?.publishSnapshot();
     await window.__PSG_ROOM_CONTEXT__?.emitChatBoundary(trimmed);
     const result = await client.sendMessage(trimmed);
@@ -209,6 +266,21 @@ function MateRawPanel({
 
     setStatus("ready");
     setRawResult(result.value);
+  }
+
+  async function fetchDiagnostics() {
+    setStatus("sending");
+    setError(null);
+    const result = await diagnosticsClient.fetchDiagnostics();
+
+    if (!result.ok) {
+      setStatus("error");
+      setError(result.error);
+      return;
+    }
+
+    setStatus("ready");
+    setRawDiagnostics(result.value);
   }
 
   return (
@@ -241,6 +313,14 @@ function MateRawPanel({
           Send
         </button>
       </form>
+      <button
+        data-testid="mate-diagnostics-button"
+        type="button"
+        disabled={status === "sending"}
+        onClick={fetchDiagnostics}
+      >
+        Diagnostics
+      </button>
       {error ? (
         <pre className="canvas-shell__mate-error" data-testid="mate-error">
           {error}
@@ -251,10 +331,22 @@ function MateRawPanel({
           {JSON.stringify(rawResult, null, 2)}
         </pre>
       ) : null}
+      {rawDiagnostics ? (
+        <pre
+          className="canvas-shell__mate-raw"
+          data-testid="mate-diagnostics-raw"
+        >
+          {JSON.stringify(rawDiagnostics, null, 2)}
+        </pre>
+      ) : null}
     </aside>
   );
 }
 
+/**
+ * 把已挂载的 tldraw editor 接入 room context runtime，让浏览器可以提取并发布
+ * AI 可消费的画布上下文。
+ */
 function registerMountedRoomContext(
   editor: Editor,
   collaboration: Extract<CollaborationState, { ok: true }>
@@ -270,6 +362,9 @@ function registerMountedRoomContext(
   });
 }
 
+/**
+ * 画布工作区的共享外框，承载状态、身份、分享入口和主体内容。
+ */
 function CanvasShellFrame({
   children,
   statusView,
@@ -342,6 +437,10 @@ function CanvasShellFrame({
   );
 }
 
+/**
+ * 生成一个 room 路由需要的浏览器侧协同状态：持久 device 身份、tab session、
+ * sync URI、tldraw user store 和展示标签。
+ */
 function createCollaborationState(roomId: string): CollaborationState {
   const identity = getOrCreateDeviceIdentity();
   const tabId = createTabSessionId();
@@ -381,6 +480,9 @@ function createCollaborationState(roomId: string): CollaborationState {
   };
 }
 
+/**
+ * 为当前浏览器 device 创建 tldraw 用户 store。
+ */
 function createDeviceUserStore(deviceId: string): TLUserStore {
   const collaborator = createCollaboratorIdentity(deviceId);
   const currentUser = computed(`psg-current-user:${deviceId}`, () =>
@@ -409,6 +511,9 @@ type RoomShareState = {
   copy: () => Promise<void>;
 };
 
+/**
+ * 生成并复制当前 room 分享 URL，同时提供短暂按钮反馈。
+ */
 function useRoomShare(roomId: string): RoomShareState {
   const [url, setUrl] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<"idle" | "copied" | "ready">(
@@ -460,22 +565,33 @@ function useRoomShare(roomId: string): RoomShareState {
   };
 }
 
-function useLoadingTimeout(isLoading: boolean, timeoutMs = 1800) {
-  const [timedOut, setTimedOut] = useState(false);
-
-  useEffect(() => {
-    if (!isLoading) {
-      setTimedOut(false);
-      return;
-    }
-
-    const timeout = window.setTimeout(() => setTimedOut(true), timeoutMs);
-    return () => window.clearTimeout(timeout);
-  }, [isLoading, timeoutMs]);
-
-  return timedOut;
+/**
+ * 在工作区中以 raw JSON 形式展示连接或异常信息。
+ */
+function RawWorkspaceMessage({
+  title,
+  value,
+  role = "status"
+}: {
+  title: string;
+  value: unknown;
+  role?: "status" | "alert";
+}) {
+  return (
+    <div className="canvas-shell__workspace--message">
+      <div className="canvas-shell__error" role={role}>
+        <strong>{title}</strong>
+        <pre className="canvas-shell__mate-raw">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
 }
 
+/**
+ * 等到 hydration 后再执行客户端专属协同初始化。
+ */
 function useClientReady() {
   const [ready, setReady] = useState(false);
 

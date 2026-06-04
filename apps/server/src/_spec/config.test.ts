@@ -7,7 +7,7 @@ import {
   DEFAULT_SYNC_ROUTE,
   isOriginAllowed,
   loadServerConfig
-} from "./config.js";
+} from "../config.js";
 
 describe("server config", () => {
   it("uses explicit local defaults", () => {

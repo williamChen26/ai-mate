@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { prepareMateTurn } from "./mate-turn.js";
-import { makeRoomContextFeed } from "./test-fixtures.js";
+import { prepareMateTurn } from "../mate-turn.js";
+import { makeRoomContextFeed } from "../test-fixtures.js";
 
 describe("prepareMateTurn", () => {
   it("rejects turn requests whose room id does not match the context feed", () => {

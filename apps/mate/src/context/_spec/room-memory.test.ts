@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createRoomMemoryStore } from "./room-memory.js";
+import { createRoomMemoryStore } from "../room-memory.js";
 
 describe("createRoomMemoryStore", () => {
   it("keeps bounded recent turns per room", () => {

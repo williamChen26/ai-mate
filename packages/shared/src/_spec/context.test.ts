@@ -10,7 +10,7 @@ import {
   canvasActionProposalOutputSchema,
   roomContextFeedSchema,
   roomOperationEventSchema
-} from "./index.js";
+} from "../index.js";
 
 const baseSource = {
   kind: "web" as const,

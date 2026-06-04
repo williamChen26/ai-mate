@@ -1,17 +1,32 @@
+/**
+ * 附加到手动 mate messages 上的浏览器/session 元数据。
+ */
 export type MateClientSource = {
   deviceId: string;
   sessionId: string;
   tabId: string;
 };
 
+/**
+ * mate message endpoint 返回的标准化 raw result。
+ */
 export type MateClientResult =
   | { ok: true; value: unknown }
   | { ok: false; error: string };
 
+/**
+ * raw Mate 面板使用的最小 client API。
+ */
 export type RoomMateClient = {
   sendMessage: (message: string) => Promise<MateClientResult>;
 };
 
+/**
+ * 为 `POST /rooms/:roomId/mate/messages` 创建 room 级 client。
+ *
+ * client 不解释 mate output，只返回 raw JSON，让当前 UI 先验证 server -> mate -> web
+ * 链路，再考虑产品样式。
+ */
 export function createRoomMateClient(input: {
   baseUrl: string;
   roomId: string;

@@ -125,17 +125,10 @@ select {
   color: #234611;
 }
 
-.canvas-shell__pill[data-state="connecting"],
-.canvas-shell__pill[data-state="local"] {
+.canvas-shell__pill[data-state="connecting"] {
   border-color: #c7b66a;
   background: #fff7d6;
   color: #5b4500;
-}
-
-.canvas-shell__pill[data-state="offline"] {
-  border-color: #d6a45f;
-  background: #fff1df;
-  color: #6a3906;
 }
 
 .canvas-shell__pill[data-state="error"] {

@@ -7,7 +7,7 @@ sprint can pass.
 
 | Area | Command | Notes |
 | --- | --- | --- |
-| Full Quality Gate | `pnpm check` | Sequential root handoff path. Runs shared test/typecheck/build, mate test/typecheck/build/smoke, server test/typecheck/build/smoke, web unit/typecheck/build/E2E, and recovery smoke. Keep this sequential to avoid `.next/types` races between Next build and TypeScript. |
+| Full Quality Gate | `pnpm check` | Sequential root handoff path. Runs shared test/typecheck/build, mate test/typecheck/build/smoke, server test/typecheck/build/smoke, and web unit/typecheck/build/E2E. Keep this sequential to avoid `.next/types` races between Next build and TypeScript. |
 | Shared Contract Tests | `pnpm --filter @production-spec-graph/shared test` | Covers Zod schemas and helpers for AI input-side canvas snapshots, operation events, context feeds, freshness metadata, and agent output/proposal contracts. |
 | Shared Contract Typecheck | `pnpm --filter @production-spec-graph/shared typecheck` | TypeScript validation for shared room context contracts consumed by web/server and future mate ingestion. |
 | Shared Contract Build | `pnpm --filter @production-spec-graph/shared build` | Builds reusable declarations and JavaScript for the shared contracts package. |
@@ -15,15 +15,14 @@ sprint can pass.
 | Mate Typecheck | `pnpm --filter mate typecheck` | TypeScript validation for the whiteboard coworker ingestion boundary. |
 | Mate Build | `pnpm --filter mate build` | Builds the deterministic mate context boundary and local smoke script without requiring model credentials. |
 | Mate Smoke | `pnpm --filter mate smoke` | Runs a credential-free sample room turn and validates non-mutating output with canvas observations and freshness metadata. |
-| Backend Unit/Integration Tests | `pnpm --filter @production-spec-graph/server test` | Covers config parsing, room/session validation, room registry behavior, context ingestion, mate message orchestration, proposal validation, and Fastify health/WebSocket route behavior. |
+| Backend Unit/Integration Tests | `pnpm --filter @production-spec-graph/server test` | Covers config parsing, room/session validation, room registry behavior, context ingestion, mate message orchestration, proposal validation, room diagnostics, and Fastify health/WebSocket route behavior. |
 | Backend Typecheck | `pnpm --filter @production-spec-graph/server typecheck` | TypeScript validation for the dedicated Node sync backend. |
 | Backend Build | `pnpm --filter @production-spec-graph/server build` | Production TypeScript build for `apps/server`. |
 | Backend Smoke | `pnpm --filter @production-spec-graph/server smoke` | Runtime smoke for `/health`, `/ready`, valid WebSocket upgrade, invalid room rejection, two sessions in one room, and process-local storage diagnostics. |
-| Web Unit Tests | `pnpm --filter @production-spec-graph/web test:unit` | Deterministic checks for sync config, device/session identity, room routing, status mapping, collaborator cues, and share URL construction. |
+| Web Unit Tests | `pnpm --filter @production-spec-graph/web test:unit` | Deterministic checks for sync config, device/session identity, room routing, status mapping, collaborator cues, share URL construction, mate client behavior, and room diagnostics client behavior. |
 | Web Typecheck | `pnpm --filter @production-spec-graph/web typecheck` | TypeScript validation for the Next.js web app. Run sequentially after build/type generation if `.next/types` is missing. |
 | Web Build | `pnpm --filter @production-spec-graph/web build` | Production Next.js build for the route-backed tldraw app. |
-| Web Integrated E2E | `pnpm --filter @production-spec-graph/web test:e2e` | Starts the backend and web app, then verifies root room creation, valid shared-room sync, context publishing, raw mate message response data, proposal raw rendering without automatic canvas mutation, invalid route rejection, status/share UI, and same-device multi-tab identity behavior. Requires local browser/port permissions. |
-| Web Recovery Smoke | `pnpm --filter @production-spec-graph/web test:recovery` | Controls local web/backend processes to verify backend-unavailable and backend restart recovery behavior. Requires local browser/port/process permissions. |
+| Web Integrated E2E | `pnpm --filter @production-spec-graph/web test:e2e` | Starts the backend and web app, then verifies root room creation, valid shared-room sync, context publishing, raw mate message response data, proposal raw rendering without automatic canvas mutation, raw room diagnostics after a mate turn, invalid route rejection, status/share UI, and same-device multi-tab identity behavior. Requires local browser/port permissions. |
 | Lint | `<not configured>` | No lint command is currently configured. |
 
 ## Optional / Situational
@@ -35,6 +34,7 @@ sprint can pass.
 | Mate Context Smoke | `pnpm --filter mate smoke` | Runs the deterministic mate ingestion smoke fixture without starting server/web or requiring model credentials. |
 | Health Probe | `curl -fsS http://127.0.0.1:3001/health` | Checks backend liveness while `apps/server` is running. |
 | Readiness Probe | `curl -fsS http://127.0.0.1:3001/ready` | Checks sync readiness and process-local room/storage diagnostics while `apps/server` is running. |
+| Room Diagnostics Probe | `curl -fsS http://127.0.0.1:3001/rooms/<room-id>/diagnostics` | Checks a live room's process-local sync presence, agent lifecycle, context freshness, latest mate response/proposal validation, and storage notes after server/web are running. |
 | Architecture Review | Manual review of `ARCHITECTURE.md` | Confirm implemented architecture, tldraw package compatibility, route contract, and non-durable storage limits are still accurate after collaboration changes. |
 | Run-Specific Evidence | Manual review of `docs/exec-plans/active/<run-id>/sprints/*` | Inspect sprint contracts, build logs, evaluations, and known limitations for the active harness run. |
 

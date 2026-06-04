@@ -24,10 +24,14 @@ export default async function RoomPage({ params }: RoomPageProps) {
               <span>AI coworker canvas</span>
             </div>
           </div>
-          <div className="canvas-shell__status" aria-label="Canvas direction">
-            <span>Source tldraw</span>
-            <span data-testid="sync-status" data-state="error">
-              Invalid room
+          <div className="canvas-shell__toolbar" aria-label="Canvas status">
+            <span className="canvas-shell__pill">Source tldraw</span>
+            <span
+              className="canvas-shell__pill"
+              data-testid="sync-status"
+              data-state="error"
+            >
+              Sync raw error
             </span>
           </div>
         </header>
@@ -37,7 +41,16 @@ export default async function RoomPage({ params }: RoomPageProps) {
         >
           <div className="canvas-shell__error" role="alert">
             <strong>Room link is not valid.</strong>
-            <span>{decision.reason}</span>
+            <pre className="canvas-shell__mate-raw">
+              {JSON.stringify(
+                {
+                  code: "INVALID_ROOM_ID",
+                  message: decision.reason
+                },
+                null,
+                2
+              )}
+            </pre>
           </div>
         </section>
       </main>

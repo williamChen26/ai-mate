@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemorySyncStorage } from "@tldraw/sync-core";
 
-import { createRoomRegistry } from "./room-registry.js";
+import { createRoomRegistry } from "../room-registry.js";
 
 describe("sync room registry", () => {
   it("creates and reuses one process-local room per normalized id", () => {

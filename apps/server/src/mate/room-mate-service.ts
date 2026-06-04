@@ -24,6 +24,10 @@ export type RoomMateError = {
   message: string;
 };
 
+/**
+ * server 侧成功 mate response envelope。它记录入站消息元数据、本次 turn 使用的
+ * context freshness、output validation 状态，以及 raw mate 结果。
+ */
 export type RoomMateResponse = {
   roomId: string;
   agentSessionId?: string;
@@ -38,6 +42,10 @@ export type RoomMateResponse = {
   mate: MateTurnResult;
 };
 
+/**
+ * mate output 的 server 侧校验摘要。server 可以接受格式正确的 proposal，
+ * 但仍然拒绝自动应用。
+ */
 export type RoomMateOutputValidation = {
   ok: boolean;
   status: "none" | "pending" | "blocked" | "invalid";
@@ -51,6 +59,9 @@ export type RoomMateResult =
 
 export type RoomMateMessageSource = z.infer<typeof roomMateMessageSourceSchema>;
 
+/**
+ * Fastify routes 使用的 room 级 mate 编排服务。
+ */
 export type RoomMateService = {
   handleMessage: (input: {
     roomId: string;
@@ -61,6 +72,9 @@ export type RoomMateService = {
   getLastResponse: (roomId: string) => RoomMateResponse | undefined;
 };
 
+/**
+ * 确定性测试和本地 smoke 运行所需的依赖注入点。
+ */
 export type RoomMateServiceOptions = {
   memoryStore?: RoomMemoryStore;
   now?: () => string;
@@ -84,6 +98,12 @@ const roomMateMessageSchema = z.object({
   source: roomMateMessageSourceSchema
 });
 
+/**
+ * 创建 server 侧 mate service。
+ *
+ * 该服务会校验 web message，确认 room context 属于同一个路由 room，调用 mate turn
+ * 边界，校验 agent output，并为 raw diagnostics 保存每个 room 的最新 response。
+ */
 export function createRoomMateService({
   memoryStore = createRoomMemoryStore(),
   now = () => new Date().toISOString(),
@@ -115,6 +135,8 @@ export function createRoomMateService({
       }
 
       try {
+        // 这里是当前“发给 AI”的边界：把用户消息和 server 当前 room context feed
+        // 一起传给 apps/mate。当前 prepareTurn 是确定性逻辑，不会调用外部 LLM。
         const rawMate = prepareTurn(
           {
             roomId,
@@ -169,6 +191,10 @@ export function createRoomMateService({
   };
 }
 
+/**
+ * 校验 mate 返回的结构化 output，并映射成安全的 server 状态。这里永远不应用
+ * proposal；过期 proposal 会被标记为 blocked。
+ */
 function validateOutput(
   output: AgentOutput,
   context: RoomContextFeed

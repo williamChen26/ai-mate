@@ -6,6 +6,7 @@ import {
   createRoomContextStore,
   type RoomContextStore
 } from "../context/room-context-store.js";
+import { createRoomDiagnostics } from "../diagnostics/room-diagnostics.js";
 import {
   createRoomMateService,
   type RoomMateService
@@ -16,6 +17,10 @@ import {
 } from "../sync/room-registry.js";
 import { attachTldrawSyncSocket } from "../sync/tldraw-sync.js";
 
+/**
+ * 构造 Fastify server 的依赖集合。测试可以注入 registry/context/mate 实现，
+ * 生产启动使用默认实现。
+ */
 export type CreateServerAppOptions = {
   config: ServerConfig;
   registry?: RoomRegistry;
@@ -24,6 +29,9 @@ export type CreateServerAppOptions = {
   logger?: boolean;
 };
 
+/**
+ * Fastify app 以及 runtime smoke tests 使用的 room registry。
+ */
 export type ServerApp = {
   app: FastifyInstance;
   registry: RoomRegistry;
@@ -37,6 +45,10 @@ type SyncRouteQuery = {
   sessionId?: string;
 };
 
+/**
+ * 构建拥有 room sync、context ingestion、mate messages 和 raw diagnostics 的
+ * Fastify app。
+ */
 export async function createServerApp({
   config,
   registry = createRoomRegistry(),
@@ -91,6 +103,10 @@ export async function createServerApp({
     reply.code(204).send()
   );
 
+  app.options("/rooms/:roomId/diagnostics", async (_request, reply) =>
+    reply.code(204).send()
+  );
+
   app.get<{
     Params: SyncRouteParams;
   }>("/rooms/:roomId/context", async (request, reply) => {
@@ -101,7 +117,10 @@ export async function createServerApp({
 
     return {
       ok: true,
-      context: contextStore.getFeed(room.roomId, getAgentContext(registry, room.roomId))
+      context: contextStore.getFeed(
+        room.roomId,
+        getAgentContext(registry, room.roomId)
+      )
     };
   });
 
@@ -113,6 +132,8 @@ export async function createServerApp({
       return reply.code(400).send(room);
     }
 
+    // snapshot 是 web 从 tldraw editor 主动推送来的 AI 输入摘要；server 只校验并
+    // 存成这个 room 的 latestSnapshot，不从 sync storage 反向拉取完整 tldraw 文档。
     const result = contextStore.acceptSnapshot(
       room.roomId,
       request.body,
@@ -151,6 +172,32 @@ export async function createServerApp({
     };
   });
 
+  app.get<{
+    Params: SyncRouteParams;
+  }>("/rooms/:roomId/diagnostics", async (request, reply) => {
+    const room = ensureRoomForContext(request.params.roomId, registry);
+    if (!room.ok) {
+      return reply.code(400).send(room);
+    }
+
+    const latestMateResponse = mateService.getLastResponse(room.roomId);
+
+    return {
+      ok: true,
+      diagnostics: createRoomDiagnostics({
+        roomId: room.roomId,
+        stats: registry.getStats(),
+        agentLifecycle: registry.getAgentLifecycleDiagnostics(),
+        context: contextStore.getFeed(
+          room.roomId,
+          getAgentContext(registry, room.roomId)
+        ),
+        ...(latestMateResponse ? { latestMateResponse } : {}),
+        generatedAt: new Date().toISOString()
+      })
+    };
+  });
+
   app.post<{
     Params: SyncRouteParams;
   }>("/rooms/:roomId/mate/messages", async (request, reply) => {
@@ -160,10 +207,15 @@ export async function createServerApp({
     }
 
     const agent = getAgentContext(registry, room.roomId);
+    // mate 每次响应读取的是 context store 当前 feed：最新 snapshot + 有界 recent
+    // events + freshness，而不是直接访问前端 editor 或 tldraw sync room。
     const result = mateService.handleMessage({
       roomId: room.roomId,
       payload: request.body,
-      context: contextStore.getFeed(room.roomId, getAgentContext(registry, room.roomId)),
+      context: contextStore.getFeed(
+        room.roomId,
+        getAgentContext(registry, room.roomId)
+      ),
       ...(agent ? { agent } : {})
     });
     return reply.code(result.ok ? 200 : 400).send(result);
@@ -196,11 +248,18 @@ export async function createServerApp({
   return { app, registry };
 }
 
+/**
+ * 查询 room 的 mate session id，并整理成 context/mate 调用所需形态。
+ */
 function getAgentContext(registry: RoomRegistry, roomId: string) {
   const agentSessionId = registry.getAgentSessionId(roomId);
   return agentSessionId ? { agentSessionId } : undefined;
 }
 
+/**
+ * 为需要 room 级状态的 HTTP endpoints 校验或创建 room。非法 id 会变成结构化
+ * 400 响应，而不是未捕获异常。
+ */
 function ensureRoomForContext(
   roomId: string,
   registry: RoomRegistry

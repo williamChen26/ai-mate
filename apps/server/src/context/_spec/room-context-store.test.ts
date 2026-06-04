@@ -8,7 +8,7 @@ import {
   type CanvasSnapshot
 } from "@production-spec-graph/shared";
 
-import { createRoomContextStore } from "./room-context-store.js";
+import { createRoomContextStore } from "../room-context-store.js";
 
 const snapshot: CanvasSnapshot = {
   schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createRoomMateClient } from "./mate-client.js";
+import { createRoomMateClient } from "../mate-client.js";
 
 const source = {
   deviceId: "device:alpha",

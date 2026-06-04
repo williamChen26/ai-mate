@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 
+/**
+ * 创建 sync room 时 server 请求的 room 级 mate session 生命周期状态。
+ */
 export type RoomAgentLifecycleState =
   | "starting"
   | "connected"
   | "unavailable"
   | "ended";
 
+/**
+ * 单个 room 的 mate session process-local 生命周期记录。
+ */
 export type RoomAgentLifecycleRecord = {
   roomId: string;
   agentSessionId: string;
@@ -18,30 +24,49 @@ export type RoomAgentLifecycleRecord = {
   endReason?: string;
 };
 
+/**
+ * 通过 readiness 和 room diagnostics 暴露的、已排序的生命周期 diagnostics。
+ */
 export type RoomAgentLifecycleDiagnostics = {
   roomCount: number;
   rooms: RoomAgentLifecycleRecord[];
 };
 
+/**
+ * 发送给 adapter 的请求；adapter 负责启动真实 mate session。
+ */
 export type RoomAgentStartRequest = {
   roomId: string;
   agentSessionId: string;
 };
 
+/**
+ * adapter 启动结果。默认 adapter 返回 unavailable，让协同链路在没有模型凭证或
+ * 独立 agent 进程时也能运行。
+ */
 export type RoomAgentStartResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+/**
+ * 请求外部 mate session 的可插拔边界。
+ */
 export type RoomAgentLifecycleAdapter = {
   startSession: (request: RoomAgentStartRequest) => RoomAgentStartResult;
 };
 
+/**
+ * 让 lifecycle 测试可确定、adapter 可替换的选项。
+ */
 export type RoomAgentLifecycleRegistryOptions = {
   adapter?: RoomAgentLifecycleAdapter;
   clock?: () => string;
   createSessionId?: (roomId: string) => string;
 };
 
+/**
+ * 内存 registry，确保每个 active room 都有一条 lifecycle record。
+ */
 export type RoomAgentLifecycleRegistry = {
   ensureRequested: (roomId: string) => RoomAgentLifecycleRecord;
   end: (roomId: string, reason: string) => RoomAgentLifecycleRecord | undefined;
@@ -49,6 +74,9 @@ export type RoomAgentLifecycleRegistry = {
   getDiagnostics: () => RoomAgentLifecycleDiagnostics;
 };
 
+/**
+ * lifecycle record 的内部状态转换事件。
+ */
 export type RoomAgentLifecycleEvent =
   | { type: "mark-connected"; at: string }
   | { type: "mark-unavailable"; at: string; reason: string }
@@ -56,10 +84,20 @@ export type RoomAgentLifecycleEvent =
 
 const DEFAULT_UNAVAILABLE_REASON = "mate adapter is not configured";
 
+/**
+ * 本地开发使用的默认 adapter。它记录 degraded/unavailable mate 状态，同时保持
+ * 白板协同可用。
+ */
 const unavailableAdapter: RoomAgentLifecycleAdapter = {
   startSession: () => ({ ok: false, reason: DEFAULT_UNAVAILABLE_REASON })
 };
 
+/**
+ * 创建 process-local lifecycle registry。
+ *
+ * 对 active record 调用 `ensureRequested` 是幂等的，因此创建 room 时可以安全请求
+ * mate 参与，不会重复启动。
+ */
 export function createRoomAgentLifecycleRegistry({
   adapter = unavailableAdapter,
   clock = () => new Date().toISOString(),
@@ -138,6 +176,9 @@ export function createRoomAgentLifecycleRegistry({
   };
 }
 
+/**
+ * lifecycle record 的纯状态转换 helper。
+ */
 export function transitionRoomAgentRecord(
   record: RoomAgentLifecycleRecord,
   event: RoomAgentLifecycleEvent
@@ -183,6 +224,9 @@ export function transitionRoomAgentRecord(
   };
 }
 
+/**
+ * 为 room lifecycle record 生成不透明 mate session id。
+ */
 function createDefaultAgentSessionId(roomId: string): string {
   return `mate:${roomId}:${randomUUID()}`;
 }

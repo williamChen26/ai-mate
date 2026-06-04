@@ -5,7 +5,7 @@ import {
   getOrCreateDeviceIdentity,
   isDeviceId,
   isTabSessionId
-} from "./device-identity";
+} from "../device-identity";
 
 class MemoryStorage {
   private values = new Map<string, string>();

@@ -5,7 +5,7 @@ import {
   type RoomContextFeed
 } from "@production-spec-graph/shared";
 
-import { createRoomMateService } from "./room-mate-service.js";
+import { createRoomMateService } from "../room-mate-service.js";
 
 const source = {
   kind: "web",

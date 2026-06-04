@@ -28,6 +28,10 @@ type ShapeLike = {
   props?: unknown;
 };
 
+/**
+ * 生成 AI 可读画布上下文所需的最小 editor surface。保持窄 adapter 可以让测试不依赖
+ * 完整 tldraw Editor 类型，也明确记录 AI pipeline 到底读取哪些字段。
+ */
 export type RoomContextEditor = {
   getCurrentPageShapes: () => ShapeLike[];
   getSelectedShapeIds: () => string[];
@@ -36,12 +40,18 @@ export type RoomContextEditor = {
   getZoomLevel?: () => number;
 };
 
+/**
+ * 复制到 snapshots 和 events 中的浏览器/session 身份，用于 diagnostics 和 room 级关联。
+ */
 export type WebContextSourceInput = {
   deviceId: string;
   sessionId: string;
   tabId: string;
 };
 
+/**
+ * 定义一次 canvas snapshot 提取所需的输入。
+ */
 export type ExtractCanvasSnapshotInput = {
   roomId: string;
   source: WebContextSourceInput;
@@ -50,16 +60,26 @@ export type ExtractCanvasSnapshotInput = {
   eventVersionAtSnapshot: number;
 };
 
+/**
+ * web 向 server 发送 room context 的传输边界。
+ */
 export type RoomContextPublisher = {
   publishSnapshot: (snapshot: CanvasSnapshot) => Promise<PublishResult>;
   publishEvent: (event: RoomOperationEvent) => Promise<PublishResult>;
   getContext: () => Promise<RoomContextFeed | null>;
 };
 
+/**
+ * context 发布调用的公共结果形态。UI 可以渲染 raw failure，而不需要在事件处理器中抛错。
+ */
 export type PublishResult =
   | { ok: true; value: unknown }
   | { ok: false; error: string };
 
+/**
+ * tldraw room 挂载期间注册到 `window` 上的开发者 runtime hook。测试、smoke 检查
+ * 和 raw Mate 面板会用它在请求 mate 前发布当前 context。
+ */
 export type RoomContextRuntimeApi = {
   extractSnapshot: () => CanvasSnapshot;
   publishSnapshot: () => Promise<PublishResult>;
@@ -73,6 +93,12 @@ export type RoomContextRuntimeApi = {
   getServerContext: () => Promise<RoomContextFeed | null>;
 };
 
+/**
+ * 从当前 tldraw editor 提取有边界、经过 schema 校验的 snapshot。
+ *
+ * snapshot 刻意保持精简：捕获 shape id/type/text、可选 bounds、selection、
+ * viewport 和 freshness counters，而不是完整 tldraw document。
+ */
 export function extractCanvasSnapshotFromEditor(
   editor: RoomContextEditor,
   input: ExtractCanvasSnapshotInput
@@ -115,6 +141,10 @@ export function extractCanvasSnapshotFromEditor(
   return canvasSnapshotSchema.parse(snapshot);
 }
 
+/**
+ * 为 room context stream 创建 chat-boundary event。完整消息通过 `/mate/messages`
+ * 发送；这个 event 只记录当前 event version 之后发生了一次用户交互。
+ */
 export function createChatBoundaryOperationEvent(input: {
   roomId: string;
   source: WebContextSourceInput;
@@ -133,6 +163,10 @@ export function createChatBoundaryOperationEvent(input: {
   });
 }
 
+/**
+ * 创建浏览器 runtime 使用的 HTTP publisher，用于向 backend 发送 snapshots、
+ * operation events，以及读取 diagnostic context。
+ */
 export function createRoomContextPublisher(input: {
   baseUrl: string;
   roomId: string;
@@ -166,6 +200,15 @@ export function createRoomContextPublisher(input: {
   };
 }
 
+/**
+ * 为已挂载的 tldraw editor 注册 room context runtime。
+ *
+ * runtime 会立即发布初始 snapshot，并暴露命令式 helpers 供后续发布 snapshot/event。
+ * 当前没有绑定 tldraw change listener；除初始发布外，snapshot 只会在 raw Mate
+ * 面板、E2E 或开发者手动调用 runtime helper 时再次发布。
+ * 当前 raw Mate 面板会在发送用户消息前调用 `publishSnapshot` 和 `emitChatBoundary`；
+ * 未来可以把 tldraw change listeners 接到同一组方法上。
+ */
 export function registerRoomContextRuntime(
   editor: RoomContextEditor,
   input: {
@@ -261,6 +304,8 @@ export function registerRoomContextRuntime(
   };
 
   window.__PSG_ROOM_CONTEXT__ = api;
+  // 当前唯一自动发布点：editor mount 后发送一份初始 snapshot。后续画布变化不会
+  // 自动触发这里，除非调用上面暴露的 runtime helper。
   void api.publishSnapshot();
 
   return () => {
@@ -270,6 +315,10 @@ export function registerRoomContextRuntime(
   };
 }
 
+/**
+ * 将 sync WebSocket room URI 转换为 context、mate 和 diagnostics endpoints 使用的
+ * HTTP base URL。
+ */
 export function createContextBaseUrlFromRoomUri(roomUri: string): string {
   const url = new URL(roomUri);
   if (url.protocol === "ws:") {
@@ -283,6 +332,9 @@ export function createContextBaseUrlFromRoomUri(roomUri: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+/**
+ * POST JSON，并把 network/server failure 标准化成 `PublishResult`。
+ */
 async function postJson(
   fetcher: typeof globalThis.fetch,
   url: string,
@@ -312,6 +364,9 @@ async function postJson(
   return { ok: true, value };
 }
 
+/**
+ * 给 snapshot 或 event 时间戳附加稳定的浏览器/session 元数据。
+ */
 function createSource(
   source: WebContextSourceInput,
   capturedAt: string
@@ -325,6 +380,9 @@ function createSource(
   };
 }
 
+/**
+ * 从 tldraw shape props 对象中提取文本。支持简单 `text` props 和嵌套 rich-text 内容。
+ */
 function extractShapeText(shape: ShapeLike): string | null {
   if (!shape.props || typeof shape.props !== "object") {
     return null;
@@ -337,6 +395,9 @@ function extractShapeText(shape: ShapeLike): string | null {
   return richText.length > 0 ? richText : null;
 }
 
+/**
+ * 从 editor 读取可选 shape page bounds，并标准化为 shared bounds contract。
+ */
 function getShapeBounds(editor: RoomContextEditor, shape: ShapeLike) {
   if (typeof editor.getShapePageBounds !== "function") {
     return null;
@@ -344,6 +405,9 @@ function getShapeBounds(editor: RoomContextEditor, shape: ShapeLike) {
   return normalizeBounds(editor.getShapePageBounds(shape));
 }
 
+/**
+ * 递归展开 tldraw rich-text-like nodes，生成 AI context 使用的纯文本片段。
+ */
 function extractRichText(value: unknown): string {
   if (!value || typeof value !== "object") {
     return "";
@@ -356,6 +420,10 @@ function extractRichText(value: unknown): string {
   return `${ownText} ${childText}`.trim();
 }
 
+/**
+ * 将 tldraw bounds-like values 标准化为 `{ x, y, w, h }`，同时支持直接对象和带
+ * `toJson()` 的对象。
+ */
 function normalizeBounds(bounds: BoundsLike | null | undefined) {
   const raw = bounds?.toJson?.() ?? bounds;
   if (!raw || typeof raw !== "object") {

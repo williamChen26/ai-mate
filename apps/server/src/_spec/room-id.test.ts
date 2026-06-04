@@ -5,7 +5,7 @@ import {
   isValidRoomId,
   normalizeRoomId,
   parseRoomId
-} from "./room-id.js";
+} from "../room-id.js";
 
 describe("room id validation", () => {
   it("normalizes safe room ids and trims accidental whitespace", () => {

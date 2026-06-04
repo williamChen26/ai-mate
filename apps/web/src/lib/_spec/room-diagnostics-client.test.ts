@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createRoomDiagnosticsClient } from "./room-diagnostics-client.js";
+import { createRoomDiagnosticsClient } from "../room-diagnostics-client.js";
 
 describe("web room diagnostics client", () => {
   it("fetches room-scoped diagnostics", async () => {

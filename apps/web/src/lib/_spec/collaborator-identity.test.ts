@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCollaboratorIdentity,
   createSessionDiagnostics
-} from "./collaborator-identity";
+} from "../collaborator-identity";
 
 describe("collaborator identity", () => {
   const firstDevice =

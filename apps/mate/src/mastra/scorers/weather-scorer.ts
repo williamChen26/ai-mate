@@ -11,7 +11,7 @@ export const toolCallAppropriatenessScorer = createToolCallAccuracyScorerCode({
 
 export const completenessScorer = createCompletenessScorer();
 
-// Custom LLM-judged scorer: evaluates if non-English locations are translated appropriately
+// 自定义 LLM 评判 scorer：评估非英文地点是否被正确翻译。
 export const translationScorer = createScorer({
   id: 'translation-quality-scorer',
   name: 'Translation Quality',

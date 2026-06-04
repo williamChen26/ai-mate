@@ -8,6 +8,7 @@
     "sourceMap": true
   },
   "exclude": [
+    "src/**/_spec/**/*",
     "src/**/*.test.ts"
   ]
 }
