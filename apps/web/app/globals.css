@@ -209,6 +209,21 @@ select {
   inset: 0;
 }
 
+.canvas-shell__ai-drop-preview {
+  position: absolute;
+  z-index: 9;
+  pointer-events: none;
+  overflow: hidden;
+  border: 1px dashed #2f7d67;
+  border-radius: 6px;
+  padding: 10px;
+  background: rgb(47 125 103 / 18%);
+  color: #1d2522;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
 .canvas-shell__mate-panel {
   position: absolute;
   right: 12px;
@@ -271,6 +286,47 @@ select {
   background: #eef1ec;
   color: #839087;
   cursor: wait;
+}
+
+.canvas-shell__conversation-result {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #d9ded6;
+  border-radius: 6px;
+  padding: 8px;
+  background: #ffffff;
+  color: #1d2522;
+  font-size: 12px;
+}
+
+.canvas-shell__conversation-result[data-state="context-stale"],
+.canvas-shell__conversation-result[data-state="context-incomplete"] {
+  border-color: #b9934c;
+  background: #fffaf0;
+}
+
+.canvas-shell__conversation-result[data-state="error"],
+.canvas-shell__conversation-result[data-state="unsupported-output"] {
+  border-color: #b75d5d;
+  background: #fff6f6;
+}
+
+.canvas-shell__conversation-result p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.canvas-shell__conversation-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+  color: #5d6861;
+}
+
+.canvas-shell__conversation-meta dt,
+.canvas-shell__conversation-meta dd {
+  margin: 0;
 }
 
 .canvas-shell__mate-raw,

@@ -6,10 +6,14 @@ import {
   createCanvasChangeEvent,
   createChatBoundaryEvent,
   createEmptyRoomContextFeed,
+  createGatewayRequest,
+  gatewayRequestSchema,
   agentOutputSchema,
   canvasActionProposalOutputSchema,
+  completionProposalOutputSchema,
   roomContextFeedSchema,
-  roomOperationEventSchema
+  roomOperationEventSchema,
+  type RoomContextFeed
 } from "../index.js";
 
 const baseSource = {
@@ -123,6 +127,174 @@ describe("canvas context shared contracts", () => {
   });
 });
 
+describe("ai gateway shared contracts", () => {
+  it("builds distinct completion and conversation gateway requests", () => {
+    const context = makeGatewayContextFeed();
+
+    const completion = createGatewayRequest({
+      requestId: "gateway:completion",
+      roomId: "alpha",
+      createdAt: "2026-06-03T00:00:05.000Z",
+      trigger: {
+        kind: "completion",
+        invokedBy: "ai-drop",
+        selection: {
+          state: "selected",
+          selectedShapeIds: ["shape:1"],
+          source: { origin: "front-end-runtime-signal", source: baseSource }
+        },
+        viewport: {
+          state: "available",
+          pageBounds: { x: 0, y: 0, w: 800, h: 600 },
+          zoom: 1,
+          source: { origin: "front-end-runtime-signal", source: baseSource }
+        },
+        source: baseSource
+      },
+      context
+    });
+    const conversation = createGatewayRequest({
+      requestId: "gateway:conversation",
+      roomId: "alpha",
+      createdAt: "2026-06-03T00:00:05.000Z",
+      trigger: {
+        kind: "conversation",
+        message: "Help organize this board",
+        chatBoundary: {
+          state: "available",
+          messageLength: 24,
+          source: { origin: "front-end-runtime-signal", source: baseSource }
+        },
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          sentAt: "2026-06-03T00:00:05.000Z"
+        }
+      },
+      context
+    });
+
+    expect(gatewayRequestSchema.parse(completion)).toMatchObject({
+      trigger: { kind: "completion" },
+      context: {
+        snapshot: { source: { origin: "server-context-feed" } },
+        recentOperations: { source: { origin: "server-context-feed" } }
+      }
+    });
+    expect(gatewayRequestSchema.parse(conversation)).toMatchObject({
+      trigger: { kind: "conversation", message: "Help organize this board" },
+      context: {
+        chatBoundary: { state: "available" }
+      }
+    });
+  });
+
+  it("requires latest snapshot and bounded ordered recent operations for intent context", () => {
+    const context = makeGatewayContextFeed({
+      events: [
+        makeCanvasEvent("event:1", 1, "first change"),
+        makeCanvasEvent("event:2", 2, "second change"),
+        makeCanvasEvent("event:3", 3, "third change")
+      ]
+    });
+
+    const request = createGatewayRequest({
+      requestId: "gateway:bounded",
+      roomId: "alpha",
+      createdAt: "2026-06-03T00:00:05.000Z",
+      operationLimit: 2,
+      trigger: {
+        kind: "completion",
+        invokedBy: "ai-drop",
+        selection: {
+          state: "empty",
+          source: { origin: "front-end-runtime-signal", source: baseSource }
+        },
+        viewport: { state: "missing", reason: "viewport not published" },
+        source: baseSource
+      },
+      context
+    });
+
+    expect(request.context.snapshot.state).toBe("available");
+    expect(request.context.recentOperations.state).toBe("available");
+    expect(request.context.recentOperations.operations.map((event) => event.eventId)).toEqual([
+      "event:2",
+      "event:3"
+    ]);
+
+    expect(() =>
+      gatewayRequestSchema.parse({
+        requestId: "gateway:snapshot-only",
+        roomId: "alpha",
+        createdAt: "2026-06-03T00:00:05.000Z",
+        trigger: {
+          kind: "completion",
+          invokedBy: "ai-drop",
+          selection: {
+            state: "empty",
+            source: { origin: "front-end-runtime-signal", source: baseSource }
+          },
+          viewport: { state: "missing", reason: "viewport not published" },
+          source: baseSource
+        },
+        context: {
+          roomId: "alpha",
+          snapshot: request.context.snapshot,
+          freshness: request.context.freshness,
+          intentReadiness: {
+            state: "ready",
+            missing: [],
+            stale: false
+          }
+        }
+      })
+    ).toThrow();
+  });
+
+  it("represents stale, empty-selection, no-selection, and missing-context states explicitly", () => {
+    const request = createGatewayRequest({
+      requestId: "gateway:incomplete",
+      roomId: "alpha",
+      createdAt: "2026-06-03T00:00:05.000Z",
+      trigger: {
+        kind: "completion",
+        invokedBy: "ai-drop",
+        selection: { state: "none", reason: "no editor selection event yet" },
+        viewport: { state: "missing", reason: "viewport not published" },
+        source: baseSource
+      },
+      context: makeGatewayContextFeed({
+        latestSnapshot: null,
+        events: [],
+        changedSinceSnapshot: true
+      })
+    });
+
+    expect(request).toMatchObject({
+      trigger: {
+        selection: { state: "none" },
+        viewport: { state: "missing" }
+      },
+      context: {
+        snapshot: { state: "missing" },
+        recentOperations: { state: "missing", operations: [] },
+        freshness: {
+          stale: true,
+          changedSinceSnapshot: true
+        },
+        intentReadiness: {
+          state: "incomplete",
+          missing: expect.arrayContaining(["latest-snapshot", "recent-operations"]),
+          stale: true
+        }
+      }
+    });
+  });
+});
+
 describe("agent output shared contracts", () => {
   const basedOn = {
     snapshotVersion: 1,
@@ -194,6 +366,66 @@ describe("agent output shared contracts", () => {
     });
   });
 
+  it("validates preview-only completion proposals and explicit agent turn outputs", () => {
+    const completion = completionProposalOutputSchema.parse({
+      schemaVersion: "agent-output.v1",
+      kind: "completion-proposal",
+      outputId: "output:completion",
+      roomId: "alpha",
+      createdAt: "2026-06-03T00:00:04.000Z",
+      basedOn,
+      nonMutating: true,
+      proposal: {
+        proposalId: "proposal:completion",
+        status: "pending",
+        previewOnly: true,
+        requiresAcceptance: true,
+        applied: false,
+        completion: {
+          kind: "text-in-element",
+          shapeId: "shape:1",
+          currentText: "User story:",
+          proposedText: "User story: As a buyer"
+        },
+        rationale: "Recent operations show text authoring."
+      }
+    });
+
+    expect(agentOutputSchema.parse(completion)).toMatchObject({
+      kind: "completion-proposal",
+      nonMutating: true,
+      proposal: {
+        previewOnly: true,
+        requiresAcceptance: true,
+        applied: false
+      }
+    });
+    expect(
+      agentOutputSchema.parse({
+        schemaVersion: "agent-output.v1",
+        kind: "conversation-answer",
+        outputId: "output:answer",
+        roomId: "alpha",
+        createdAt: "2026-06-03T00:00:04.000Z",
+        basedOn,
+        text: "I would group the launch risks first.",
+        nonMutating: true
+      })
+    ).toMatchObject({ kind: "conversation-answer" });
+    expect(
+      agentOutputSchema.parse({
+        schemaVersion: "agent-output.v1",
+        kind: "no-op",
+        outputId: "output:no-op",
+        roomId: "alpha",
+        createdAt: "2026-06-03T00:00:04.000Z",
+        basedOn,
+        reason: "Selection alone is not enough evidence for completion.",
+        nonMutating: true
+      })
+    ).toMatchObject({ kind: "no-op" });
+  });
+
   it("rejects unsafe or ambiguous proposals", () => {
     expect(() =>
       canvasActionProposalOutputSchema.parse({
@@ -219,3 +451,54 @@ describe("agent output shared contracts", () => {
     ).toThrow();
   });
 });
+
+function makeGatewayContextFeed({
+  latestSnapshot,
+  events = [makeCanvasEvent("event:1", 1, "shape created")],
+  changedSinceSnapshot
+}: {
+  latestSnapshot?: RoomContextFeed["latestSnapshot"];
+  events?: RoomContextFeed["recentEvents"];
+  changedSinceSnapshot?: boolean;
+} = {}): RoomContextFeed {
+  const snapshot =
+    latestSnapshot === undefined
+      ? {
+          schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+          roomId: "alpha",
+          source: baseSource,
+          document: {
+            shapeCount: 1,
+            shapes: [{ id: "shape:1", type: "text", text: "Launch plan" }]
+          },
+          selection: { selectedShapeIds: ["shape:1"] },
+          viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+          freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+        }
+      : latestSnapshot;
+  const eventVersion = events.at(-1)?.eventVersion ?? 0;
+
+  return roomContextFeedSchema.parse({
+    roomId: "alpha",
+    latestSnapshot: snapshot,
+    recentEvents: events,
+    freshness: {
+      snapshotVersion: snapshot?.freshness.snapshotVersion ?? 0,
+      eventVersion,
+      changedSinceSnapshot: changedSinceSnapshot ?? eventVersion > 0
+    },
+    generatedAt: "2026-06-03T00:00:04.000Z"
+  });
+}
+
+function makeCanvasEvent(eventId: string, eventVersion: number, summary: string) {
+  return createCanvasChangeEvent({
+    roomId: "alpha",
+    eventId,
+    eventVersion,
+    source: baseSource,
+    occurredAt: "2026-06-03T00:00:01.000Z",
+    affectedShapeIds: ["shape:1"],
+    summary
+  });
+}

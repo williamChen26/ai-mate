@@ -1,11 +1,18 @@
 import {
   AGENT_OUTPUT_SCHEMA_VERSION,
   agentOutputSchema,
+  gatewayRequestSchema,
   roomContextFeedSchema,
   roomIdSchema
 } from "@production-spec-graph/shared";
 import { z } from "zod";
 
+import {
+  agentTurnPlanSchema,
+  createCompletionProposalOutput,
+  planAgentTurn,
+  type AgentTurnPlan
+} from "./agent-turn.js";
 import {
   createRoomMemoryStore,
   type RoomMemoryDiagnostics,
@@ -26,6 +33,7 @@ export const mateTurnRequestSchema = z
     roomId: roomIdSchema,
     userMessage: z.string().trim().min(1).max(8_000).optional(),
     mode: z.enum(["respond", "passive"]).default("respond"),
+    gateway: gatewayRequestSchema.optional(),
     context: roomContextFeedSchema
   })
   .refine((request) => request.roomId === request.context.roomId, {
@@ -60,6 +68,7 @@ export const mateTurnResultSchema = z.object({
     confidence: z.enum(["low", "medium", "high"]),
     signals: z.array(z.string())
   }),
+  agentTurn: agentTurnPlanSchema,
   uncertainty: z.array(z.string()),
   output: agentOutputSchema,
   memory: z.object({
@@ -107,11 +116,18 @@ export function prepareMateTurn(
   };
   const uncertainty = describeUncertainty(request, observations, basedOn.stale);
   const interpretation = inferIntent(request, observations, uncertainty);
+  const agentTurn = planAgentTurn({
+    context: request.context,
+    uncertainty,
+    basedOn,
+    ...(request.gateway ? { gateway: request.gateway } : {})
+  });
   const id = turnId();
   const output = chooseOutput(
     request,
     observations,
     interpretation,
+    agentTurn,
     basedOn,
     generatedAt,
     `${id}:output`
@@ -132,6 +148,7 @@ export function prepareMateTurn(
     basedOn,
     observations,
     interpretation,
+    agentTurn,
     uncertainty,
     output,
     memory
@@ -251,10 +268,53 @@ function chooseOutput(
   request: z.infer<typeof mateTurnRequestSchema>,
   observations: ReturnType<typeof observeRoom>,
   interpretation: ReturnType<typeof inferIntent>,
+  agentTurn: AgentTurnPlan,
   basedOn: MateTurnResult["basedOn"],
   createdAt: string,
   outputId: string
 ) {
+  if (agentTurn.finalOutputKind === "completion-proposal") {
+    return createCompletionProposalOutput(
+      {
+        roomId: request.roomId,
+        context: request.context,
+        agentTurn,
+        basedOn,
+        createdAt,
+        outputId
+      }
+    );
+  }
+
+  if (agentTurn.finalOutputKind === "no-op-refusal") {
+    return {
+      schemaVersion: AGENT_OUTPUT_SCHEMA_VERSION,
+      kind: "no-op" as const,
+      outputId,
+      roomId: request.roomId,
+      createdAt,
+      basedOn,
+      reason: agentTurn.decision.reason,
+      nonMutating: true as const
+    };
+  }
+
+  if (
+    agentTurn.finalOutputKind === "clarifying-question" &&
+    request.gateway?.trigger.kind === "completion"
+  ) {
+    return {
+      schemaVersion: AGENT_OUTPUT_SCHEMA_VERSION,
+      kind: "question" as const,
+      outputId,
+      roomId: request.roomId,
+      createdAt,
+      basedOn,
+      text: "I need a clearer recent authoring signal before suggesting a completion.",
+      nonMutating: true as const
+    };
+  }
+
   if (isCreateNoteRequest(request.userMessage)) {
     const blocked = basedOn.stale;
     return agentOutputSchema.parse({
@@ -311,6 +371,23 @@ function chooseOutput(
       basedOn,
       text:
         "I do not see canvas content yet. What would you like to sketch, plan, or organize here?",
+      nonMutating: true as const
+    };
+  }
+
+  if (agentTurn.finalOutputKind === "conversation-answer") {
+    return {
+      schemaVersion: AGENT_OUTPUT_SCHEMA_VERSION,
+      kind: "conversation-answer" as const,
+      outputId,
+      roomId: request.roomId,
+      createdAt,
+      basedOn,
+      text: `Based on the board, I would ${interpretation.intent}.${
+        observations.textSnippets.length > 0
+          ? ` I see notes like: ${observations.textSnippets.join(", ")}.`
+          : ""
+      }`,
       nonMutating: true as const
     };
   }

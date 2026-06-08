@@ -180,7 +180,7 @@ export async function createServerApp({
       return reply.code(400).send(room);
     }
 
-    const latestMateResponse = mateService.getLastResponse(room.roomId);
+    const latestMateRecord = mateService.getLastDiagnosticRecord(room.roomId);
 
     return {
       ok: true,
@@ -192,7 +192,7 @@ export async function createServerApp({
           room.roomId,
           getAgentContext(registry, room.roomId)
         ),
-        ...(latestMateResponse ? { latestMateResponse } : {}),
+        ...(latestMateRecord ? { latestMateRecord } : {}),
         generatedAt: new Date().toISOString()
       })
     };

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CANVAS_CONTEXT_SCHEMA_VERSION } from "@production-spec-graph/shared";
 
 import { loadServerConfig } from "../../config.js";
+import { createRoomMateService } from "../../mate/room-mate-service.js";
 import { createServerApp } from "../app.js";
 
 describe("server app", () => {
@@ -336,6 +337,28 @@ describe("server app", () => {
       response: {
         roomId: "alpha",
         message: { length: 22 },
+        gateway: {
+          trigger: {
+            kind: "conversation",
+            source: {
+              deviceId: "device:alpha",
+              sessionId: "device:alpha:tab:one"
+            }
+          },
+          context: {
+            snapshot: {
+              state: "available",
+              source: { origin: "server-context-feed" }
+            },
+            recentOperations: {
+              state: "missing"
+            },
+            intentReadiness: {
+              state: "incomplete",
+              missing: expect.arrayContaining(["recent-operations"])
+            }
+          }
+        },
         mate: {
           roomId: "alpha",
           output: { nonMutating: true },
@@ -472,6 +495,29 @@ describe("server app", () => {
           hasResponse: true,
           outputKind: "canvas-action-proposal",
           proposalStatus: "blocked",
+          gatewaySummary: {
+            triggerKind: "conversation",
+            contextFreshness: {
+              snapshotVersion: 1,
+              eventVersion: 1,
+              changedSinceSnapshot: true
+            },
+            intentReadiness: {
+              state: expect.stringMatching(/ready|stale|incomplete/)
+            },
+            agentTurn: {
+              finalOutputKind: expect.any(String)
+            },
+            outputKind: "canvas-action-proposal",
+            outputValidation: {
+              status: "blocked",
+              applied: false
+            },
+            bounded: {
+              storesFullPromptHistory: false,
+              storesPromptText: false
+            }
+          },
           outputValidation: {
             ok: true,
             status: "blocked",
@@ -492,6 +538,121 @@ describe("server app", () => {
         }
       }
     });
+    expect(JSON.stringify(response.json().diagnostics.mate.gatewaySummary)).not.toContain(
+      "Add a note for follow up"
+    );
+    expect(JSON.stringify(response.json().diagnostics.mate.lastResponse)).not.toContain(
+      "Add a note for follow up"
+    );
+
+    await app.close();
+  });
+
+  it("keeps bounded diagnostics for malformed mate outputs", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      mateService: createRoomMateService({
+        prepareTurn: () => ({
+          roomId: "alpha",
+          output: {
+            kind: "canvas-action-proposal",
+            proposal: {
+              requiresAcceptance: false,
+              action: { text: "Do not store this malformed text" }
+            }
+          }
+        })
+      }),
+      logger: false
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/snapshot",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-03T00:00:00.000Z"
+        },
+        document: { shapeCount: 0, shapes: [] },
+        selection: { selectedShapeIds: [] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+      }
+    });
+
+    const mateResponse = await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/mate/messages",
+      payload: {
+        message: "Please create malformed diagnostics",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          sentAt: "2026-06-03T00:00:02.000Z"
+        }
+      }
+    });
+    const diagnosticsResponse = await app.inject({
+      method: "GET",
+      url: "/rooms/alpha/diagnostics"
+    });
+
+    expect(mateResponse.statusCode).toBe(400);
+    expect(mateResponse.json()).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_AGENT_OUTPUT" }
+    });
+    expect(diagnosticsResponse.json()).toMatchObject({
+      ok: true,
+      diagnostics: {
+        mate: {
+          hasDiagnostic: true,
+          hasResponse: false,
+          proposalStatus: "invalid",
+          gatewaySummary: {
+            triggerKind: "conversation",
+            outputKind: "invalid",
+            outputValidation: {
+              status: "invalid",
+              applied: false,
+              reason: expect.any(String)
+            },
+            bounded: {
+              storesPromptText: false,
+              storesFullPromptHistory: false
+            }
+          },
+          outputValidation: {
+            ok: false,
+            status: "invalid",
+            applied: false,
+            reason: expect.any(String)
+          },
+          failure: {
+            code: "INVALID_AGENT_OUTPUT",
+            bounded: {
+              storesRawAgentOutput: false,
+              storesPromptText: false,
+              storesFullPromptHistory: false
+            }
+          }
+        }
+      }
+    });
+    expect(JSON.stringify(diagnosticsResponse.json().diagnostics.mate)).not.toContain(
+      "Please create malformed diagnostics"
+    );
+    expect(JSON.stringify(diagnosticsResponse.json().diagnostics.mate)).not.toContain(
+      "Do not store this malformed text"
+    );
 
     await app.close();
   });

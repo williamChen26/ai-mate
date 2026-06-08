@@ -181,7 +181,49 @@ test("sends a raw mate message and renders structured response data", async ({
   await expect(page.getByTestId("mate-raw-result")).toContainText(
     "nonMutating"
   );
+  await expect(page.getByTestId("conversation-result")).toBeVisible();
+  await expect(page.getByTestId("conversation-state")).toHaveText(
+    /success|context-incomplete|context-stale/
+  );
+  await expect(page.getByTestId("conversation-trigger-kind")).toHaveText(
+    "conversation"
+  );
+  await expect(page.getByTestId("conversation-output-kind")).toHaveText(
+    /conversation-answer|question|suggestion|no-op/
+  );
   await expect(page.locator(".tl-container").first()).toBeVisible();
+});
+
+test("renders conversation answers without arming AI Drop or mutating canvas", async ({
+  page
+}) => {
+  const roomPath = `/rooms/e2e-conversation-${Date.now()}`;
+  await page.goto(roomPath);
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+
+  await createTextShapeThroughUi(page, `Conversation ${Date.now()}`);
+  const beforeCount = await readContextShapeCount(page);
+
+  await page.getByTestId("mate-message-input").fill("What do you see here?");
+  await page.getByTestId("mate-send-button").click();
+
+  await expect(page.getByTestId("conversation-result")).toBeVisible();
+  await expect(page.getByTestId("conversation-text")).toContainText(
+    /Based on the board|What would you like|helpful next step|board changed|refresh context/i
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    '"kind": "conversation"'
+  );
+  await expect(page.getByTestId("mate-raw-result")).toContainText(
+    "agentTurn"
+  );
+  await expect(page.getByTestId("ai-drop-preview")).toHaveCount(0);
+  await expect.poll(() => readContextShapeCount(page)).toBe(beforeCount);
+
+  await page.keyboard.press("Tab");
+
+  await expect(page.getByTestId("ai-drop-preview")).toHaveCount(0);
+  await expect.poll(() => readContextShapeCount(page)).toBe(beforeCount);
 });
 
 test("renders a proposed canvas action without applying it automatically", async ({
@@ -222,9 +264,86 @@ test("renders a proposed canvas action without applying it automatically", async
   await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
     "outputValidation"
   );
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    "gatewaySummary"
+  );
+  await expect(page.getByTestId("mate-diagnostics-raw")).toContainText(
+    "storesPromptText"
+  );
   await expect
     .poll(() => readContextShapeCount(page), { timeout: 3_000 })
     .toBe(beforeCount);
+});
+
+test("previews and accepts an AI Drop text completion with Tab", async ({
+  page
+}) => {
+  const roomPath = `/rooms/e2e-ai-drop-text-${Date.now()}`;
+  await page.goto(roomPath);
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+
+  await createTextShapeThroughUi(page, `Drop ${Date.now()}`);
+  const beforeCount = await readContextShapeCount(page);
+
+  await activateTextAiDrop(page, "AI Drop accepted note");
+
+  await expect(page.getByTestId("ai-drop-preview")).toBeVisible();
+  await expect(page.getByTestId("ai-drop-preview")).toContainText(
+    "AI Drop accepted note"
+  );
+  await expect(await readAiDropDiagnostics(page)).toMatchObject({
+    path: "ai-drop",
+    lifecycleStatus: "preview",
+    preview: { active: true },
+    safety: { previewOnly: true, hiddenCanvasMutation: false }
+  });
+  await expect.poll(() => readContextShapeCount(page)).toBe(beforeCount);
+
+  await page.keyboard.press("Tab");
+
+  await expect(page.getByTestId("ai-drop-preview")).toHaveCount(0);
+  await expect(await readAiDropDiagnostics(page)).toMatchObject({
+    lifecycleStatus: "applied",
+    safety: { applied: true, hiddenCanvasMutation: false }
+  });
+  await expect.poll(() => readContextShapeCount(page)).toBe(beforeCount + 1);
+  await expect.poll(() => readContextText(page)).toContain(
+    "AI Drop accepted note"
+  );
+});
+
+test("refuses a stale AI Drop proposal after selection changes", async ({
+  page
+}) => {
+  const roomPath = `/rooms/e2e-ai-drop-stale-${Date.now()}`;
+  await page.goto(roomPath);
+  await expect(page.getByTestId("sync-status")).toHaveText("Backend sync");
+
+  await createTextShapeThroughUi(page, "First target");
+  await activateTextAiDrop(page, "This should not apply");
+  await expect(page.getByTestId("ai-drop-preview")).toBeVisible();
+
+  await createTextShapeThroughUi(page, "Second target");
+  const beforeTabCount = await readContextShapeCount(page);
+
+  await expect(page.getByTestId("ai-drop-preview")).toHaveCount(0);
+  const state = await readAiDropState(page);
+  expect(state).toMatchObject({
+    status: "refused",
+    reason: "selection-mismatch"
+  });
+  await expect(await readAiDropDiagnostics(page)).toMatchObject({
+    lifecycleStatus: "refused",
+    refusalReason: "selection-mismatch",
+    safety: { applied: false, hiddenCanvasMutation: false }
+  });
+
+  await page.keyboard.press("Tab");
+
+  await expect.poll(() => readContextShapeCount(page)).toBe(beforeTabCount);
+  await expect.poll(() => readContextText(page)).not.toContain(
+    "This should not apply"
+  );
 });
 
 test("keeps same-device tabs as independent live sessions", async ({
@@ -308,6 +427,63 @@ async function readContextShapeCount(page: Page) {
   return page.evaluate(
     () => window.__PSG_ROOM_CONTEXT__?.extractSnapshot().document.shapeCount ?? 0
   );
+}
+
+async function readContextText(page: Page) {
+  return page.evaluate(
+    () =>
+      window.__PSG_ROOM_CONTEXT__?.extractSnapshot().document.shapes
+        .map((shape) => shape.text ?? "")
+        .join("\n") ?? ""
+  );
+}
+
+async function activateTextAiDrop(page: Page, text: string) {
+  return page.evaluate((candidate) => {
+    const runtime = (
+      window as Window & {
+        __PSG_AI_DROP__?: {
+          activateTextCompletion: (input: { text: string }) => unknown;
+        };
+      }
+    ).__PSG_AI_DROP__;
+    if (!runtime) {
+      throw new Error("AI Drop hook was not registered.");
+    }
+    return runtime.activateTextCompletion({ text: candidate });
+  }, text);
+}
+
+async function readAiDropState(page: Page) {
+  return page.evaluate(() => {
+    const runtime = (
+      window as Window & {
+        __PSG_AI_DROP__?: {
+          getState: () => unknown;
+        };
+      }
+    ).__PSG_AI_DROP__;
+    if (!runtime) {
+      throw new Error("AI Drop hook was not registered.");
+    }
+    return runtime.getState();
+  });
+}
+
+async function readAiDropDiagnostics(page: Page) {
+  return page.evaluate(() => {
+    const runtime = (
+      window as Window & {
+        __PSG_AI_DROP__?: {
+          getDiagnostics: () => unknown;
+        };
+      }
+    ).__PSG_AI_DROP__;
+    if (!runtime) {
+      throw new Error("AI Drop hook was not registered.");
+    }
+    return runtime.getDiagnostics();
+  });
 }
 
 async function readIdentity(page: Page) {

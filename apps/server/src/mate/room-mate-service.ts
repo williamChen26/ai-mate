@@ -9,12 +9,15 @@ import { z } from "zod";
 
 import {
   agentOutputSchema,
+  createGatewayRequest,
   type AgentOutput,
+  type GatewayRequest,
   type RoomContextFeed
 } from "@production-spec-graph/shared";
 
 export type RoomMateErrorCode =
   | "INVALID_MATE_MESSAGE"
+  | "INVALID_GATEWAY_REQUEST"
   | "INVALID_AGENT_OUTPUT"
   | "ROOM_MISMATCH"
   | "MATE_TURN_FAILED";
@@ -38,9 +41,33 @@ export type RoomMateResponse = {
   context: {
     freshness: RoomContextFeed["freshness"];
   };
+  gateway: GatewayRequest;
   outputValidation: RoomMateOutputValidation;
   mate: MateTurnResult;
 };
+
+export type RoomMateFailureDiagnostics = {
+  diagnosticKind: "failure";
+  roomId: string;
+  agentSessionId?: string;
+  message: {
+    length: number;
+    source: RoomMateMessageSource;
+  };
+  context: {
+    freshness: RoomContextFeed["freshness"];
+  };
+  gateway: GatewayRequest;
+  outputValidation: RoomMateOutputValidation;
+  error: RoomMateError;
+  bounded: {
+    storesRawAgentOutput: false;
+    storesPromptText: false;
+    storesFullPromptHistory: false;
+  };
+};
+
+export type RoomMateDiagnosticRecord = RoomMateResponse | RoomMateFailureDiagnostics;
 
 /**
  * mate output 的 server 侧校验摘要。server 可以接受格式正确的 proposal，
@@ -70,6 +97,7 @@ export type RoomMateService = {
     agent?: { agentSessionId?: string };
   }) => RoomMateResult;
   getLastResponse: (roomId: string) => RoomMateResponse | undefined;
+  getLastDiagnosticRecord: (roomId: string) => RoomMateDiagnosticRecord | undefined;
 };
 
 /**
@@ -111,6 +139,7 @@ export function createRoomMateService({
   prepareTurn = prepareMateTurn
 }: RoomMateServiceOptions = {}): RoomMateService {
   const lastResponses = new Map<string, RoomMateResponse>();
+  const lastDiagnosticRecords = new Map<string, RoomMateDiagnosticRecord>();
 
   return {
     handleMessage({ roomId, payload, context, agent }) {
@@ -134,6 +163,30 @@ export function createRoomMateService({
         };
       }
 
+      // gateway 是 server -> AI 的入口合同：raw mate message 先被标记为
+      // conversation trigger，并携带 server feed 中的 snapshot 与有界操作栈。
+      const gatewayResult = safeCreateGatewayRequest(() =>
+        createGatewayRequest({
+          requestId: `gateway:${roomId}:${parsed.data.source.sentAt}`,
+          roomId,
+          createdAt: now(),
+          trigger: {
+            kind: "conversation",
+            message: parsed.data.message,
+            chatBoundary: {
+              state: "missing",
+              reason:
+                "No chat-boundary event was present in the bounded server context feed."
+            },
+            source: parsed.data.source
+          },
+          context
+        })
+      );
+      if (!gatewayResult.ok) {
+        return gatewayResult;
+      }
+
       try {
         // 这里是当前“发给 AI”的边界：把用户消息和 server 当前 room context feed
         // 一起传给 apps/mate。当前 prepareTurn 是确定性逻辑，不会调用外部 LLM。
@@ -141,19 +194,51 @@ export function createRoomMateService({
           {
             roomId,
             userMessage: parsed.data.message,
+            gateway: gatewayResult.gateway,
             context
           },
           { memoryStore, now, turnId }
         );
         const parsedMate = mateTurnResultSchema.safeParse(rawMate);
         if (!parsedMate.success) {
+          const reason = parsedMate.error.issues
+            .map((issue) => issue.message)
+            .join("; ");
+          lastDiagnosticRecords.set(roomId, {
+            diagnosticKind: "failure",
+            roomId,
+            ...(agent?.agentSessionId
+              ? { agentSessionId: agent.agentSessionId }
+              : {}),
+            message: {
+              length: parsed.data.message.length,
+              source: parsed.data.source
+            },
+            context: {
+              freshness: context.freshness
+            },
+            gateway: gatewayResult.gateway,
+            outputValidation: {
+              ok: false,
+              status: "invalid",
+              applied: false,
+              reason
+            },
+            error: {
+              code: "INVALID_AGENT_OUTPUT",
+              message: reason
+            },
+            bounded: {
+              storesRawAgentOutput: false,
+              storesPromptText: false,
+              storesFullPromptHistory: false
+            }
+          });
           return {
             ok: false,
             error: {
               code: "INVALID_AGENT_OUTPUT",
-              message: parsedMate.error.issues
-                .map((issue) => issue.message)
-                .join("; ")
+              message: reason
             }
           };
         }
@@ -169,10 +254,12 @@ export function createRoomMateService({
           context: {
             freshness: context.freshness
           },
+          gateway: gatewayResult.gateway,
           outputValidation,
           mate
         };
         lastResponses.set(roomId, response);
+        lastDiagnosticRecords.set(roomId, response);
         return { ok: true, response };
       } catch (error) {
         return {
@@ -187,8 +274,34 @@ export function createRoomMateService({
 
     getLastResponse(roomId) {
       return lastResponses.get(roomId);
+    },
+
+    getLastDiagnosticRecord(roomId) {
+      return lastDiagnosticRecords.get(roomId);
     }
   };
+}
+
+/**
+ * 单独归类 gateway contract 构造错误，避免把协议错误误报成 mate 执行失败。
+ */
+function safeCreateGatewayRequest(
+  build: () => GatewayRequest
+): { ok: true; gateway: GatewayRequest } | { ok: false; error: RoomMateError } {
+  try {
+    return { ok: true, gateway: build() };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_GATEWAY_REQUEST",
+          message: error.issues.map((issue) => issue.message).join("; ")
+        }
+      };
+    }
+    throw error;
+  }
 }
 
 /**

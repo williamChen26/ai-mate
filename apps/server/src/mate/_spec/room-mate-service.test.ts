@@ -30,7 +30,8 @@ describe("room mate service", () => {
       context: makeRoomContextFeed({
         roomId: "alpha",
         shapeTexts: ["Launch plan", "Risks"],
-        eventKinds: ["canvas-change"]
+        eventKinds: ["canvas-change"],
+        changedSinceSnapshot: false
       }),
       agent: { agentSessionId: "mate:alpha:session" }
     });
@@ -43,7 +44,14 @@ describe("room mate service", () => {
         message: { length: 24 },
         mate: {
           roomId: "alpha",
-          output: { nonMutating: true },
+          agentTurn: {
+            decision: { intent: "conversation-answer" },
+            toolCalls: []
+          },
+          output: {
+            kind: "conversation-answer",
+            nonMutating: true
+          },
           observations: {
             shapeCount: 2,
             textSnippets: ["Launch plan", "Risks"]
@@ -55,6 +63,63 @@ describe("room mate service", () => {
       }
     });
     expect(service.getLastResponse("alpha")?.mate.turnId).toBe("turn:alpha");
+  });
+
+  it("maps raw room messages to conversation gateway requests without changing mate output", () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-03T00:00:05.000Z",
+      turnId: () => "turn:gateway"
+    });
+    const result = service.handleMessage({
+      roomId: "alpha",
+      payload: {
+        message: "Help organize this board",
+        source
+      },
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["Launch plan"],
+        eventKinds: ["canvas-change", "chat-boundary"]
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: {
+        gateway: {
+          roomId: "alpha",
+          trigger: {
+            kind: "conversation",
+            chatBoundary: {
+              state: "available",
+              source: { origin: "server-context-feed" }
+            }
+          },
+          context: {
+            snapshot: {
+              state: "available",
+              source: { origin: "server-context-feed" }
+            },
+            recentOperations: {
+              state: "available",
+              source: { origin: "server-context-feed" },
+              operations: [
+                { eventId: "event:1", kind: "canvas-change" },
+                { eventId: "event:2", kind: "chat-boundary" }
+              ]
+            }
+          }
+        },
+        mate: {
+          roomId: "alpha",
+          agentTurn: {
+            decision: { intent: "conversation-answer" },
+            toolCalls: []
+          },
+          output: { nonMutating: true }
+        }
+      }
+    });
   });
 
   it("rejects empty messages before calling mate", () => {
@@ -89,6 +154,31 @@ describe("room mate service", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { code: "ROOM_MISMATCH" }
+    });
+  });
+
+  it("reports invalid gateway requests separately from mate turn failures", () => {
+    const service = createRoomMateService({
+      prepareTurn: () => {
+        throw new Error("prepareTurn should not be called");
+      }
+    });
+    const context = {
+      ...makeRoomContextFeed({ roomId: "alpha" }),
+      generatedAt: "not-a-date"
+    } as RoomContextFeed;
+    const result = service.handleMessage({
+      roomId: "alpha",
+      payload: {
+        message: "What changed?",
+        source
+      },
+      context
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_GATEWAY_REQUEST" }
     });
   });
 
@@ -186,6 +276,24 @@ describe("room mate service", () => {
       error: { code: "INVALID_AGENT_OUTPUT" }
     });
     expect(service.getLastResponse("alpha")).toBeUndefined();
+    expect(service.getLastDiagnosticRecord("alpha")).toMatchObject({
+      diagnosticKind: "failure",
+      roomId: "alpha",
+      outputValidation: {
+        ok: false,
+        status: "invalid",
+        applied: false,
+        reason: expect.any(String)
+      },
+      error: {
+        code: "INVALID_AGENT_OUTPUT"
+      },
+      bounded: {
+        storesRawAgentOutput: false,
+        storesPromptText: false,
+        storesFullPromptHistory: false
+      }
+    });
   });
 });
 
@@ -197,7 +305,7 @@ function makeRoomContextFeed({
 }: {
   roomId: string;
   shapeTexts?: string[];
-  eventKinds?: Array<"canvas-change" | "selection-change">;
+  eventKinds?: Array<"canvas-change" | "selection-change" | "chat-boundary">;
   changedSinceSnapshot?: boolean;
 }): RoomContextFeed {
   const eventVersion = changedSinceSnapshot ? eventKinds.length + 1 : eventKinds.length;
@@ -242,7 +350,9 @@ function makeRoomContextFeed({
       occurredAt: "2026-06-03T00:00:02.000Z",
       ...(kind === "canvas-change"
         ? { affectedShapeIds: ["shape:1"], summary: "fixture change" }
-        : { selectedShapeIds: ["shape:1"] })
+        : kind === "selection-change"
+          ? { selectedShapeIds: ["shape:1"] }
+          : { messageLength: 24 })
     })),
     freshness: {
       snapshotVersion: 1,

@@ -10,12 +10,16 @@ export type FixtureEventKind = RoomOperationEvent["kind"];
 export function makeRoomContextFeed({
   roomId = "room-fixture",
   shapeTexts = ["Launch plan"],
+  shapeTypes,
   eventKinds = ["canvas-change"],
+  eventSummaries,
   changedSinceSnapshot = false
 }: {
   roomId?: string;
   shapeTexts?: string[];
+  shapeTypes?: string[];
   eventKinds?: FixtureEventKind[];
+  eventSummaries?: string[];
   changedSinceSnapshot?: boolean;
 } = {}): RoomContextFeed {
   const capturedAt = "2026-06-03T00:00:00.000Z";
@@ -40,7 +44,7 @@ export function makeRoomContextFeed({
         shapeCount: shapeTexts.length,
         shapes: shapeTexts.map((text, index) => ({
           id: `shape:${index + 1}`,
-          type: "text",
+          type: shapeTypes?.[index] ?? "text",
           text,
           bounds: {
             x: 20 + index * 10,
@@ -68,7 +72,12 @@ export function makeRoomContextFeed({
       }
     },
     recentEvents: eventKinds.map((kind, index) =>
-      makeOperationEvent({ roomId, kind, eventVersion: index + 1 })
+      makeOperationEvent({
+        roomId,
+        kind,
+        eventVersion: index + 1,
+        summary: eventSummaries?.[index]
+      })
     ),
     freshness: {
       snapshotVersion,
@@ -82,11 +91,13 @@ export function makeRoomContextFeed({
 function makeOperationEvent({
   roomId,
   kind,
-  eventVersion
+  eventVersion,
+  summary
 }: {
   roomId: string;
   kind: FixtureEventKind;
   eventVersion: number;
+  summary?: string;
 }): RoomOperationEvent {
   const base = {
     schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION as typeof CANVAS_CONTEXT_SCHEMA_VERSION,
@@ -108,7 +119,7 @@ function makeOperationEvent({
       ...base,
       kind,
       affectedShapeIds: ["shape:1"],
-      summary: "fixture canvas change"
+      summary: summary ?? "fixture canvas change"
     };
   }
   if (kind === "selection-change") {

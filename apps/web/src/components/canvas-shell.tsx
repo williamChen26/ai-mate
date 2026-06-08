@@ -8,6 +8,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode
@@ -22,6 +23,10 @@ import {
   type Editor,
   type TLUserStore
 } from "tldraw";
+import {
+  AGENT_OUTPUT_SCHEMA_VERSION,
+  type CompletionProposalOutput
+} from "@production-spec-graph/shared";
 
 import {
   createTabSessionId,
@@ -46,6 +51,23 @@ import {
 } from "@/lib/room-context";
 import { createRoomMateClient } from "@/lib/mate-client";
 import { createRoomDiagnosticsClient } from "@/lib/room-diagnostics-client";
+import {
+  acceptAiDropProposal,
+  activateAiDropProposal,
+  clearAiDropProposal,
+  createAiDropDiagnostics,
+  refreshAiDropProposalState,
+  type AiDropDiagnostics,
+  type AiDropProposalState,
+  type AiDropRuntimeContext
+} from "@/lib/ai-drop-proposal";
+import { applyAiDropProposalToEditor } from "@/lib/ai-drop-canvas-boundary";
+import {
+  classifyConversationGatewayResponse,
+  createConversationGatewayState,
+  getConversationOutputText,
+  type ConversationGatewayState
+} from "@/lib/conversation-gateway";
 
 type CollaborationState =
   | {
@@ -126,6 +148,7 @@ function SyncedCanvasShell({
 }: {
   collaboration: Extract<CollaborationState, { ok: true }>;
 }) {
+  const [editor, setEditor] = useState<Editor | null>(null);
   const store = useSync({
     uri: collaboration.roomUri,
     assets: inlineBase64AssetStore,
@@ -191,8 +214,12 @@ function SyncedCanvasShell({
       <div className="canvas-shell__editor" data-testid="tldraw-host">
         <Tldraw
           store={store}
-          onMount={(editor) => registerMountedRoomContext(editor, collaboration)}
+          onMount={(mountedEditor) => {
+            setEditor(mountedEditor);
+            return registerMountedRoomContext(mountedEditor, collaboration);
+          }}
         />
+        {editor ? <AiDropRuntime editor={editor} /> : null}
       </div>
       <MateRawPanel collaboration={collaboration} />
     </CanvasShellFrame>
@@ -217,6 +244,9 @@ function MateRawPanel({
   );
   const [rawResult, setRawResult] = useState<unknown>(null);
   const [rawDiagnostics, setRawDiagnostics] = useState<unknown>(null);
+  const [conversation, setConversation] = useState<ConversationGatewayState>(
+    createConversationGatewayState("idle")
+  );
   const [error, setError] = useState<string | null>(null);
   const client = useMemo(
     () =>
@@ -246,10 +276,12 @@ function MateRawPanel({
     if (!trimmed) {
       setStatus("error");
       setError("Message is required.");
+      setConversation(createConversationGatewayState("empty-message"));
       return;
     }
 
     setStatus("sending");
+    setConversation(createConversationGatewayState("pending"));
     setError(null);
     setRawResult(null);
     // 发送 mate 消息前主动刷新一次 AI 可读 snapshot。紧接着写入 chat-boundary
@@ -261,11 +293,13 @@ function MateRawPanel({
     if (!result.ok) {
       setStatus("error");
       setError(result.error);
+      setConversation(createConversationGatewayState("error", result.error));
       return;
     }
 
     setStatus("ready");
     setRawResult(result.value);
+    setConversation(classifyConversationGatewayResponse(result.value));
   }
 
   async function fetchDiagnostics() {
@@ -313,6 +347,7 @@ function MateRawPanel({
           Send
         </button>
       </form>
+      <ConversationGatewayResult state={conversation} />
       <button
         data-testid="mate-diagnostics-button"
         type="button"
@@ -344,6 +379,261 @@ function MateRawPanel({
 }
 
 /**
+ * 最小 conversation surface。它只展示 direct answer/state 和少量元数据，raw
+ * 结构仍然保留在下方 pre 中，避免这期滑向聊天 UI 设计。
+ */
+function ConversationGatewayResult({
+  state
+}: {
+  state: ConversationGatewayState;
+}) {
+  if (state.status === "idle") {
+    return null;
+  }
+
+  const text = getConversationOutputText(state);
+
+  return (
+    <section
+      className="canvas-shell__conversation-result"
+      data-testid="conversation-result"
+      data-state={state.status}
+      aria-live="polite"
+    >
+      <div className="canvas-shell__mate-row">
+        <strong>Conversation</strong>
+        <span data-testid="conversation-state">{state.status}</span>
+      </div>
+      {text ? <p data-testid="conversation-text">{text}</p> : null}
+      <dl className="canvas-shell__conversation-meta">
+        {state.outputKind ? (
+          <>
+            <dt>Output</dt>
+            <dd data-testid="conversation-output-kind">{state.outputKind}</dd>
+          </>
+        ) : null}
+        {state.triggerKind ? (
+          <>
+            <dt>Trigger</dt>
+            <dd data-testid="conversation-trigger-kind">{state.triggerKind}</dd>
+          </>
+        ) : null}
+        {state.freshnessState ? (
+          <>
+            <dt>Freshness</dt>
+            <dd data-testid="conversation-freshness">{state.freshnessState}</dd>
+          </>
+        ) : null}
+        {state.readinessState ? (
+          <>
+            <dt>Readiness</dt>
+            <dd data-testid="conversation-readiness">{state.readinessState}</dd>
+          </>
+        ) : null}
+      </dl>
+    </section>
+  );
+}
+
+/**
+ * AI Drop 的最小浏览器运行时。它负责把 completion-proposal 变成透明预览，并把
+ * Tab 接受动作收束到受控 tldraw apply boundary。
+ */
+function AiDropRuntime({ editor }: { editor: Editor }) {
+  const [proposalState, setProposalState] = useState<AiDropProposalState>(
+    clearAiDropProposal("initial")
+  );
+  const proposalStateRef = useRef(proposalState);
+
+  useEffect(() => {
+    proposalStateRef.current = proposalState;
+  }, [proposalState]);
+
+  const readContext = (): AiDropRuntimeContext | null => {
+    const snapshot = window.__PSG_ROOM_CONTEXT__?.extractSnapshot();
+    if (!snapshot) {
+      return null;
+    }
+    return {
+      snapshot,
+      freshness: {
+        snapshotVersion: snapshot.freshness.snapshotVersion,
+        eventVersion: snapshot.freshness.eventVersionAtSnapshot,
+        changedSinceSnapshot: false,
+        stale: false
+      }
+    };
+  };
+
+  const activate = (output: unknown) => {
+    const context = readContext();
+    const next = context
+      ? activateAiDropProposal(output, context)
+      : ({ status: "refused", reason: "missing-runtime-context" } as const);
+    setProposalState(next);
+    return next;
+  };
+
+  const accept = async () => {
+    const context = readContext();
+    if (!context) {
+      const next = { status: "refused", reason: "missing-runtime-context" } as const;
+      setProposalState(next);
+      return next;
+    }
+
+    const next = await acceptAiDropProposal(
+      proposalStateRef.current,
+      context,
+      (active) => applyAiDropProposalToEditor(editor, active)
+    );
+    setProposalState(next);
+
+    if (next.status === "applied") {
+      await window.__PSG_ROOM_CONTEXT__?.emitCanvasChange({
+        affectedShapeIds: next.appliedShapeIds,
+        summary: "ai-drop accepted proposal"
+      });
+      await window.__PSG_ROOM_CONTEXT__?.publishSnapshot();
+    }
+
+    return next;
+  };
+
+  useEffect(() => {
+    const api: AiDropRuntimeApi = {
+      activate,
+      activateTextCompletion(input = {}) {
+        const context = readContext();
+        const output = context
+          ? createDeterministicAiDropOutput(context, "text-in-element", input.text)
+          : null;
+        return output
+          ? activate(output)
+          : setAndReturn(setProposalState, {
+              status: "refused",
+              reason: "missing-runtime-context"
+            });
+      },
+      activateFlowContinuation(input = {}) {
+        const context = readContext();
+        const output = context
+          ? createDeterministicAiDropOutput(
+              context,
+              "flow-continuation",
+              input.text
+            )
+          : null;
+        return output
+          ? activate(output)
+          : setAndReturn(setProposalState, {
+              status: "refused",
+              reason: "missing-runtime-context"
+            });
+      },
+      accept,
+      cancel(reason = "cancelled") {
+        return setAndReturn(setProposalState, clearAiDropProposal(reason));
+      },
+      getState() {
+        return proposalStateRef.current;
+      },
+      getDiagnostics() {
+        return createAiDropDiagnostics(proposalStateRef.current);
+      }
+    };
+
+    window.__PSG_AI_DROP__ = api;
+    return () => {
+      if (window.__PSG_AI_DROP__ === api) {
+        delete window.__PSG_AI_DROP__;
+      }
+    };
+  });
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (shouldIgnoreAiDropKeyEvent(event)) {
+        return;
+      }
+      if (event.key === "Escape" && proposalStateRef.current.status === "active") {
+        event.preventDefault();
+        setProposalState(clearAiDropProposal("escape"));
+      }
+      if (event.key === "Tab" && proposalStateRef.current.status === "active") {
+        event.preventDefault();
+        void accept();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  useEffect(() => {
+    if (proposalState.status !== "active") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const context = readContext();
+      if (!context) {
+        return;
+      }
+      const refreshed = refreshAiDropProposalState(
+        proposalStateRef.current,
+        context
+      );
+      if (refreshed.status !== "active") {
+        setProposalState(refreshed);
+      }
+    }, 250);
+
+    return () => window.clearInterval(timer);
+  }, [proposalState.status]);
+
+  if (proposalState.status !== "active") {
+    return null;
+  }
+
+  return <AiDropPreviewOverlay editor={editor} state={proposalState} />;
+}
+
+/**
+ * 渲染候选预览。它只是 DOM overlay，不创建 tldraw shape，所以 Tab 前不会污染
+ * 协同文档或被其他协作者当成真实画布状态。
+ */
+function AiDropPreviewOverlay({
+  editor,
+  state
+}: {
+  editor: Editor;
+  state: Extract<AiDropProposalState, { status: "active" }>;
+}) {
+  const preview = state.preview;
+  const point = editor.pageToScreen({ x: preview.bounds.x, y: preview.bounds.y });
+  const zoom = editor.getZoomLevel?.() ?? 1;
+
+  return (
+    <div
+      className="canvas-shell__ai-drop-preview"
+      data-testid="ai-drop-preview"
+      data-kind={preview.kind}
+      style={{
+        left: Math.max(12, point.x),
+        top: Math.max(12, point.y),
+        width: Math.max(160, preview.bounds.w * zoom),
+        minHeight: Math.max(44, preview.bounds.h * zoom)
+      }}
+    >
+      {preview.kind === "flow-continuation"
+        ? preview.nodes.map((node) => node.text).join(" -> ")
+        : preview.text}
+    </div>
+  );
+}
+
+/**
  * 把已挂载的 tldraw editor 接入 room context runtime，让浏览器可以提取并发布
  * AI 可消费的画布上下文。
  */
@@ -360,6 +650,96 @@ function registerMountedRoomContext(
       tabId: collaboration.tabId
     }
   });
+}
+
+/**
+ * 这期的窄激活入口：用当前 selection 生成 deterministic completion-proposal。
+ * 它只服务本地验证和 E2E，不新增 AI 输出协议，也不代表真正 LLM provider。
+ */
+function createDeterministicAiDropOutput(
+  context: AiDropRuntimeContext,
+  variant: "text-in-element" | "flow-continuation",
+  text?: string
+): CompletionProposalOutput | null {
+  const targetId = context.snapshot.selection.selectedShapeIds[0];
+  const targetShape = context.snapshot.document.shapes.find(
+    (shape) => shape.id === targetId
+  );
+
+  if (!targetId || !targetShape || !context.freshness) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const base = {
+    schemaVersion:
+      AGENT_OUTPUT_SCHEMA_VERSION as CompletionProposalOutput["schemaVersion"],
+    outputId: `ai-drop-output:${now}`,
+    roomId: context.snapshot.roomId,
+    createdAt: now,
+    basedOn: context.freshness,
+    nonMutating: true as const,
+    kind: "completion-proposal" as const
+  };
+
+  if (variant === "flow-continuation") {
+    return {
+      ...base,
+      proposal: {
+        proposalId: `ai-drop-proposal:${now}`,
+        status: "pending",
+        previewOnly: true,
+        requiresAcceptance: true,
+        applied: false,
+        completion: {
+          kind: "flow-continuation",
+          anchorShapeId: targetId,
+          proposedNodes: [
+            { text: text?.trim() || "Continue with the next validation step" }
+          ],
+          proposedConnectors: [
+            { fromShapeId: targetId, toProposedNodeIndex: 0 }
+          ]
+        },
+        rationale: "Deterministic local AI Drop fixture for selected flow context."
+      }
+    };
+  }
+
+  return {
+    ...base,
+    proposal: {
+      proposalId: `ai-drop-proposal:${now}`,
+      status: "pending",
+      previewOnly: true,
+      requiresAcceptance: true,
+      applied: false,
+      completion: {
+        kind: "text-in-element",
+        shapeId: targetId,
+        currentText: targetShape.text ?? "",
+        proposedText:
+          text?.trim() ||
+          `${targetShape.text ?? ""} What outcome should this step produce?`.trim()
+      },
+      rationale: "Deterministic local AI Drop fixture for selected text context."
+    }
+  };
+}
+
+function shouldIgnoreAiDropKeyEvent(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null;
+  return Boolean(
+    target?.closest("textarea,input,select") || target?.isContentEditable
+  );
+}
+
+function setAndReturn<T extends AiDropProposalState>(
+  setState: (state: T) => void,
+  state: T
+): T {
+  setState(state);
+  return state;
 }
 
 /**
@@ -600,4 +980,20 @@ function useClientReady() {
   }, []);
 
   return ready;
+}
+
+type AiDropRuntimeApi = {
+  activate: (output: unknown) => AiDropProposalState;
+  activateTextCompletion: (input?: { text?: string }) => AiDropProposalState;
+  activateFlowContinuation: (input?: { text?: string }) => AiDropProposalState;
+  accept: () => Promise<AiDropProposalState>;
+  cancel: (reason?: string) => AiDropProposalState;
+  getState: () => AiDropProposalState;
+  getDiagnostics: () => AiDropDiagnostics;
+};
+
+declare global {
+  interface Window {
+    __PSG_AI_DROP__?: AiDropRuntimeApi;
+  }
 }
