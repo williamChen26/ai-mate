@@ -1,0 +1,24 @@
+{
+  "id": "2026-06-08-automatic-ai-drop-context",
+  "status": "completed",
+  "task": "把 AI Drop 体验从 console 手动 emit/publish 改为自动捕获 tldraw 操作、自动发布 context，并在作者行为后自动触发 server completion。",
+  "created_at": "2026-06-08T10:25:00Z",
+  "updated_at": "2026-06-08T10:33:40Z",
+  "spec_features": [
+    {
+      "id": "F1",
+      "name": "Automatic Context Publishing and AI Drop Trigger",
+      "status": "completed",
+      "priority": "P0"
+    }
+  ],
+  "current_sprint": null,
+  "sprint_history": [
+    {
+      "number": 1,
+      "feature_id": "F1",
+      "rounds": 1,
+      "verdict": "passed"
+    }
+  ]
+}

@@ -5,7 +5,8 @@ import { CANVAS_CONTEXT_SCHEMA_VERSION } from "@production-spec-graph/shared";
 import {
   createChatBoundaryOperationEvent,
   createRoomContextPublisher,
-  extractCanvasSnapshotFromEditor
+  extractCanvasSnapshotFromEditor,
+  registerRoomContextRuntime
 } from "../room-context.js";
 
 const source = {
@@ -142,6 +143,169 @@ describe("web room context extraction and publishing", () => {
     );
   });
 
+  it("keeps read-only extraction on the last published snapshot version", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true })
+    })) as unknown as typeof globalThis.fetch;
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("window", {});
+
+    const cleanup = registerRoomContextRuntime(
+      {
+        getCurrentPageShapes: () => [],
+        getSelectedShapeIds: () => [],
+        getViewportPageBounds: () => ({ x: 0, y: 0, w: 800, h: 600 }),
+        getZoomLevel: () => 1
+      },
+      {
+        baseUrl: "http://127.0.0.1:3001",
+        roomId: "alpha",
+        source
+      }
+    );
+
+    try {
+      const runtime = window.__PSG_ROOM_CONTEXT__;
+      if (!runtime) {
+        throw new Error("room context runtime was not registered");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(runtime.extractSnapshot().freshness.snapshotVersion).toBe(1);
+      expect(runtime.extractSnapshot().freshness.snapshotVersion).toBe(1);
+
+      const publishResult = await runtime.publishSnapshot();
+
+      expect(publishResult.ok).toBe(true);
+      expect(publishResult.snapshot?.freshness.snapshotVersion).toBe(2);
+      expect(runtime.extractSnapshot().freshness.snapshotVersion).toBe(2);
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("automatically publishes canvas changes and dispatches an authoring signal", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true })
+    })) as unknown as typeof globalThis.fetch;
+    const dispatchEvent = vi.fn((_event: Event) => true);
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      dispatchEvent
+    });
+    const listeners = createFakeStoreListeners();
+    const cleanup = registerRoomContextRuntime(
+      {
+        getCurrentPageShapes: () => [
+          { id: "shape:one", type: "text", props: { text: "Draft" } }
+        ],
+        getSelectedShapeIds: () => ["shape:one"],
+        getViewportPageBounds: () => ({ x: 0, y: 0, w: 800, h: 600 }),
+        getZoomLevel: () => 1,
+        store: listeners.store
+      },
+      {
+        baseUrl: "http://127.0.0.1:3001",
+        roomId: "alpha",
+        source,
+        autoPublish: { debounceMs: 1 }
+      }
+    );
+
+    try {
+      await wait(0);
+      listeners.document?.({ changes: { added: {}, updated: {}, removed: {} } });
+      await wait(10);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:3001/rooms/alpha/context/events",
+        expect.objectContaining({
+          body: expect.stringContaining("text edited")
+        })
+      );
+      expect(fetch).toHaveBeenLastCalledWith(
+        "http://127.0.0.1:3001/rooms/alpha/context/snapshot",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(dispatchEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "psg:room-context:auto",
+          detail: expect.objectContaining({
+            kind: "canvas-change",
+            roomId: "alpha"
+          })
+        })
+      );
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("automatically emits selection and viewport events without canvas authoring signals", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true })
+    })) as unknown as typeof globalThis.fetch;
+    const dispatchEvent = vi.fn((_event: Event) => true);
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      dispatchEvent
+    });
+    const listeners = createFakeStoreListeners();
+    let selectedShapeIds = ["shape:one"];
+    const cleanup = registerRoomContextRuntime(
+      {
+        getCurrentPageShapes: () => [
+          { id: "shape:one", type: "text", props: { text: "Draft" } }
+        ],
+        getSelectedShapeIds: () => selectedShapeIds,
+        getViewportPageBounds: () => ({ x: 10, y: 20, w: 800, h: 600 }),
+        getZoomLevel: () => 1.2,
+        store: listeners.store
+      },
+      {
+        baseUrl: "http://127.0.0.1:3001",
+        roomId: "alpha",
+        source,
+        autoPublish: { debounceMs: 1 }
+      }
+    );
+
+    try {
+      await wait(0);
+      selectedShapeIds = ["shape:two"];
+      listeners.session?.({ changes: { added: {}, updated: {}, removed: {} } });
+      await wait(10);
+
+      const eventBodies = vi.mocked(fetch).mock.calls
+        .filter((call) => String(call[0]).endsWith("/context/events"))
+        .map((call) => String((call[1] as { body?: unknown }).body));
+      expect(eventBodies.some((body) => body.includes("selection-change"))).toBe(
+        true
+      );
+      expect(eventBodies.some((body) => body.includes("viewport-change"))).toBe(
+        true
+      );
+      expect(
+        dispatchEvent.mock.calls.some((call) =>
+          JSON.stringify(call[0]).includes("canvas-change")
+        )
+      ).toBe(false);
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("returns inspectable publish failures instead of throwing on network errors", async () => {
     const fetch = vi.fn(async () => {
       throw new Error("backend unavailable");
@@ -170,3 +334,39 @@ describe("web room context extraction and publishing", () => {
     await expect(publisher.getContext()).resolves.toBeNull();
   });
 });
+
+function createFakeStoreListeners() {
+  type FakeEntry = { changes?: { added?: {}; updated?: {}; removed?: {} } };
+  type FakeListener = (entry: FakeEntry) => void;
+  const listeners: {
+    document?: FakeListener;
+    session?: FakeListener;
+    cleanup: Array<() => void>;
+  } = { cleanup: [] };
+  return {
+    get document() {
+      return listeners.document;
+    },
+    get session() {
+      return listeners.session;
+    },
+    store: {
+      listen(listener: FakeListener, filters?: { scope?: string }) {
+        if (filters?.scope === "document") {
+          listeners.document = listener;
+        }
+        if (filters?.scope === "session") {
+          listeners.session = listener;
+        }
+        const cleanup = vi.fn(() => undefined);
+        listeners.cleanup.push(cleanup);
+        return cleanup;
+      }
+    },
+    cleanup: listeners.cleanup
+  };
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

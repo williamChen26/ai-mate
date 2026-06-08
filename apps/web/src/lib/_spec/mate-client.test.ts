@@ -77,4 +77,76 @@ describe("web mate client", () => {
       }).sendMessage("hello")
     ).resolves.toEqual({ ok: false, error: "backend unavailable" });
   });
+
+  it("requests AI Drop completion with live selection and viewport facts", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        response: {
+          mate: {
+            output: {
+              kind: "completion-proposal"
+            }
+          }
+        }
+      })
+    })) as unknown as typeof globalThis.fetch;
+    const client = createRoomMateClient({
+      baseUrl: "http://127.0.0.1:3001/",
+      roomId: "alpha",
+      source,
+      fetch
+    });
+
+    await expect(
+      client.requestCompletion({
+        schemaVersion: "canvas-context.v1",
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          ...source,
+          capturedAt: "2026-06-08T00:00:00.000Z"
+        },
+        document: {
+          shapeCount: 1,
+          shapes: [{ id: "shape:1", type: "text", text: "As a" }]
+        },
+        selection: { selectedShapeIds: ["shape:1"] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        response: {
+          mate: {
+            output: { kind: "completion-proposal" }
+          }
+        }
+      }
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3001/rooms/alpha/mate/completions",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          selection: {
+            state: "selected",
+            selectedShapeIds: ["shape:1"]
+          },
+          viewport: {
+            state: "available",
+            pageBounds: { x: 0, y: 0, w: 800, h: 600 },
+            zoom: 1
+          },
+          source: {
+            kind: "web",
+            ...source,
+            capturedAt: "2026-06-08T00:00:00.000Z"
+          }
+        })
+      })
+    );
+  });
 });

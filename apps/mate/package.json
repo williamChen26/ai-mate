@@ -11,6 +11,10 @@
     "./memory": {
       "types": "./src/context/room-memory.ts",
       "import": "./dist/context/room-memory.js"
+    },
+    "./runtime": {
+      "types": "./src/context/mastra-runtime-adapter.ts",
+      "import": "./dist/context/mastra-runtime-adapter.js"
     }
   },
   "scripts": {

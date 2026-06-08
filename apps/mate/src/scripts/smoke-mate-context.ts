@@ -27,6 +27,9 @@ if (!result.basedOn.stale) {
 if (!result.observations.textSnippets.includes("Launch plan")) {
   throw new Error("Mate smoke did not read canvas text from the context feed.");
 }
+if (result.runtime.outputSource !== "deterministic-fallback") {
+  throw new Error("Mate smoke should remain credential-free by default.");
+}
 
 console.log(
   JSON.stringify(
@@ -37,6 +40,7 @@ console.log(
       observations: result.observations,
       interpretation: result.interpretation,
       basedOn: result.basedOn,
+      runtime: result.runtime,
       memory: result.memory
     },
     null,

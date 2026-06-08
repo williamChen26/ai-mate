@@ -28,6 +28,26 @@ type ShapeLike = {
   props?: unknown;
 };
 
+type StoreHistoryEntryLike = {
+  changes?: {
+    added?: Record<string, unknown>;
+    updated?: Record<string, [unknown, unknown]>;
+    removed?: Record<string, unknown>;
+  };
+};
+
+type StoreListenFiltersLike = {
+  source?: "all" | "user" | "remote";
+  scope?: "all" | "document" | "session" | "presence";
+};
+
+type StoreLike = {
+  listen: (
+    onHistory: (entry: StoreHistoryEntryLike) => void,
+    filters?: StoreListenFiltersLike
+  ) => () => void;
+};
+
 /**
  * 生成 AI 可读画布上下文所需的最小 editor surface。保持窄 adapter 可以让测试不依赖
  * 完整 tldraw Editor 类型，也明确记录 AI pipeline 到底读取哪些字段。
@@ -38,6 +58,7 @@ export type RoomContextEditor = {
   getShapePageBounds?: unknown;
   getViewportPageBounds: () => BoundsLike;
   getZoomLevel?: () => number;
+  store?: StoreLike;
 };
 
 /**
@@ -82,7 +103,7 @@ export type PublishResult =
  */
 export type RoomContextRuntimeApi = {
   extractSnapshot: () => CanvasSnapshot;
-  publishSnapshot: () => Promise<PublishResult>;
+  publishSnapshot: () => Promise<PublishResult & { snapshot?: CanvasSnapshot }>;
   emitCanvasChange: (input?: {
     affectedShapeIds?: string[];
     summary?: string;
@@ -91,6 +112,15 @@ export type RoomContextRuntimeApi = {
   emitViewportChange: () => Promise<PublishResult>;
   emitChatBoundary: (message: string) => Promise<PublishResult>;
   getServerContext: () => Promise<RoomContextFeed | null>;
+};
+
+export const ROOM_CONTEXT_AUTO_EVENT = "psg:room-context:auto";
+
+export type RoomContextAutoEventDetail = {
+  kind: "canvas-change" | "selection-change" | "viewport-change";
+  roomId: string;
+  snapshotVersion: number;
+  eventVersion: number;
 };
 
 /**
@@ -203,11 +233,9 @@ export function createRoomContextPublisher(input: {
 /**
  * 为已挂载的 tldraw editor 注册 room context runtime。
  *
- * runtime 会立即发布初始 snapshot，并暴露命令式 helpers 供后续发布 snapshot/event。
- * 当前没有绑定 tldraw change listener；除初始发布外，snapshot 只会在 raw Mate
- * 面板、E2E 或开发者手动调用 runtime helper 时再次发布。
- * 当前 raw Mate 面板会在发送用户消息前调用 `publishSnapshot` 和 `emitChatBoundary`；
- * 未来可以把 tldraw change listeners 接到同一组方法上。
+ * runtime 会立即发布初始 snapshot，并暴露命令式 helpers 供调试、E2E 和 chat
+ * boundary 继续复用；默认还会监听 tldraw store，把用户的 document/session
+ * 变化自动发布到 server，让 AI gateway 不再依赖手动 console emit。
  */
 export function registerRoomContextRuntime(
   editor: RoomContextEditor,
@@ -215,6 +243,10 @@ export function registerRoomContextRuntime(
     baseUrl: string;
     roomId: string;
     source: WebContextSourceInput;
+    autoPublish?: {
+      enabled?: boolean;
+      debounceMs?: number;
+    };
   }
 ): () => void {
   if (typeof window === "undefined") {
@@ -227,6 +259,29 @@ export function registerRoomContextRuntime(
   });
   let snapshotVersion = 0;
   let eventVersion = 0;
+  const autoPublish = {
+    enabled: input.autoPublish?.enabled ?? true,
+    debounceMs: input.autoPublish?.debounceMs ?? 650
+  };
+  const cleanupTasks: Array<() => void> = [];
+  let canvasTimer: number | undefined;
+  let viewportTimer: number | undefined;
+  let previousSelectionKey = "";
+  let previousViewportKey = "";
+
+  /**
+   * 从 editor 读取一份指定版本的 snapshot。读取当前上下文不能顺手递增版本；
+   * 只有真正发布到 server 的 snapshot 才应该成为下一版，否则 AI Drop 轮询会把
+   * 自己的只读检查误判成 freshness 变化。
+   */
+  const extractSnapshotAtVersion = (version: number) =>
+    extractCanvasSnapshotFromEditor(editor, {
+      roomId: input.roomId,
+      source: input.source,
+      capturedAt: new Date().toISOString(),
+      snapshotVersion: version,
+      eventVersionAtSnapshot: eventVersion
+    });
 
   const nextEventBase = () => {
     eventVersion += 1;
@@ -239,18 +294,13 @@ export function registerRoomContextRuntime(
 
   const api: RoomContextRuntimeApi = {
     extractSnapshot() {
-      return extractCanvasSnapshotFromEditor(editor, {
-        roomId: input.roomId,
-        source: input.source,
-        capturedAt: new Date().toISOString(),
-        snapshotVersion: snapshotVersion + 1,
-        eventVersionAtSnapshot: eventVersion
-      });
+      return extractSnapshotAtVersion(Math.max(1, snapshotVersion));
     },
     async publishSnapshot() {
-      const snapshot = api.extractSnapshot();
+      const snapshot = extractSnapshotAtVersion(snapshotVersion + 1);
       snapshotVersion = snapshot.freshness.snapshotVersion;
-      return publisher.publishSnapshot(snapshot);
+      const result = await publisher.publishSnapshot(snapshot);
+      return result.ok ? { ...result, snapshot } : result;
     },
     async emitCanvasChange(eventInput = {}) {
       const event = createCanvasChangeEvent({
@@ -304,15 +354,239 @@ export function registerRoomContextRuntime(
   };
 
   window.__PSG_ROOM_CONTEXT__ = api;
-  // 当前唯一自动发布点：editor mount 后发送一份初始 snapshot。后续画布变化不会
-  // 自动触发这里，除非调用上面暴露的 runtime helper。
   void api.publishSnapshot();
 
+  if (autoPublish.enabled) {
+    cleanupTasks.push(
+      registerAutomaticContextPublishing(editor, api, {
+        roomId: input.roomId,
+        debounceMs: autoPublish.debounceMs,
+        getSnapshotVersion: () => snapshotVersion,
+        getEventVersion: () => eventVersion,
+        setCanvasTimer: (timer) => {
+          canvasTimer = timer;
+        },
+        getCanvasTimer: () => canvasTimer,
+        setViewportTimer: (timer) => {
+          viewportTimer = timer;
+        },
+        getViewportTimer: () => viewportTimer,
+        getPreviousSelectionKey: () => previousSelectionKey,
+        setPreviousSelectionKey: (key) => {
+          previousSelectionKey = key;
+        },
+        getPreviousViewportKey: () => previousViewportKey,
+        setPreviousViewportKey: (key) => {
+          previousViewportKey = key;
+        }
+      })
+    );
+  }
+
   return () => {
+    cleanupTasks.forEach((cleanup) => cleanup());
+    if (canvasTimer !== undefined) {
+      window.clearTimeout(canvasTimer);
+    }
+    if (viewportTimer !== undefined) {
+      window.clearTimeout(viewportTimer);
+    }
     if (window.__PSG_ROOM_CONTEXT__ === api) {
       delete window.__PSG_ROOM_CONTEXT__;
     }
   };
+}
+
+/**
+ * 自动把 tldraw store 变化转成 AI gateway 可读的 context feed。document 变化代表
+ * 作者行为，会发布 canvas-change + snapshot；session 变化只补充 selection/viewport
+ * 事实，不直接触发 AI Drop。
+ */
+function registerAutomaticContextPublishing(
+  editor: RoomContextEditor,
+  api: RoomContextRuntimeApi,
+  state: {
+    roomId: string;
+    debounceMs: number;
+    getSnapshotVersion: () => number;
+    getEventVersion: () => number;
+    setCanvasTimer: (timer: number | undefined) => void;
+    getCanvasTimer: () => number | undefined;
+    setViewportTimer: (timer: number | undefined) => void;
+    getViewportTimer: () => number | undefined;
+    getPreviousSelectionKey: () => string;
+    setPreviousSelectionKey: (key: string) => void;
+    getPreviousViewportKey: () => string;
+    setPreviousViewportKey: (key: string) => void;
+  }
+) {
+  const cleanups: Array<() => void> = [];
+  if (!editor.store?.listen) {
+    return () => undefined;
+  }
+
+  cleanups.push(
+    editor.store.listen(
+      () => {
+        const currentTimer = state.getCanvasTimer();
+        if (currentTimer !== undefined) {
+          window.clearTimeout(currentTimer);
+        }
+        state.setCanvasTimer(
+          window.setTimeout(() => {
+            state.setCanvasTimer(undefined);
+            void publishAutomaticCanvasChange(api, state.roomId, editor);
+          }, state.debounceMs)
+        );
+      },
+      { source: "user", scope: "document" }
+    )
+  );
+
+  cleanups.push(
+    editor.store.listen(
+      () => {
+        publishSelectionIfChanged(editor, api, state);
+        scheduleViewportPublish(editor, api, state);
+      },
+      { source: "user", scope: "session" }
+    )
+  );
+
+  return () => cleanups.forEach((cleanup) => cleanup());
+}
+
+/**
+ * 发布一次“用户真的改了画布”的证据。这里先发 operation event，再发 snapshot，
+ * 成功后通知浏览器内的 AI Drop runtime 可以考虑请求补全。
+ */
+async function publishAutomaticCanvasChange(
+  api: RoomContextRuntimeApi,
+  roomId: string,
+  editor?: RoomContextEditor
+) {
+  const eventResult = await api.emitCanvasChange({
+    affectedShapeIds: editor?.getSelectedShapeIds().map(String) ?? [],
+    summary: editor
+      ? createAutomaticCanvasChangeSummary(editor)
+      : "user edited canvas"
+  });
+  const snapshotResult = eventResult.ok
+    ? await api.publishSnapshot()
+    : { ok: false as const, error: eventResult.error };
+  if (eventResult.ok && snapshotResult.ok && snapshotResult.snapshot) {
+    dispatchRoomContextAutoEvent({
+      kind: "canvas-change",
+      roomId,
+      snapshotVersion: snapshotResult.snapshot.freshness.snapshotVersion,
+      eventVersion: snapshotResult.snapshot.freshness.eventVersionAtSnapshot
+    });
+  }
+}
+
+/**
+ * 给自动 canvas-change 生成轻量摘要。这个摘要不是 prompt 全文，而是给后端
+ * intent router 一个最近行为信号：更像 text 输入，还是流程图附近编辑。
+ */
+function createAutomaticCanvasChangeSummary(editor: RoomContextEditor): string {
+  const selectedIds = editor.getSelectedShapeIds().map(String);
+  const selectedShape = editor
+    .getCurrentPageShapes()
+    .find((shape) => selectedIds.includes(String(shape.id)));
+  if (!selectedShape) {
+    return "user edited canvas";
+  }
+  if (String(selectedShape.type) === "text") {
+    return `text edited in ${selectedShape.id}`;
+  }
+  if (/geo|draw|arrow|connector|node|shape/i.test(String(selectedShape.type))) {
+    return `flow edited near ${selectedShape.id}`;
+  }
+  return `shape edited: ${selectedShape.id}`;
+}
+
+/**
+ * 只在 selection 真的变化时发布事件。selection 是 AI 感知上下文，但不代表
+ * 用户正在创作，因此这里只补 feed，不触发补全。
+ */
+function publishSelectionIfChanged(
+  editor: RoomContextEditor,
+  api: RoomContextRuntimeApi,
+  state: {
+    roomId: string;
+    getSnapshotVersion: () => number;
+    getEventVersion: () => number;
+    getPreviousSelectionKey: () => string;
+    setPreviousSelectionKey: (key: string) => void;
+  }
+) {
+  const key = editor.getSelectedShapeIds().map(String).sort().join("|");
+  if (key === state.getPreviousSelectionKey()) {
+    return;
+  }
+  state.setPreviousSelectionKey(key);
+  void api.emitSelectionChange().then((result) => {
+    if (result.ok) {
+      dispatchRoomContextAutoEvent({
+        kind: "selection-change",
+        roomId: state.roomId,
+        snapshotVersion: state.getSnapshotVersion(),
+        eventVersion: state.getEventVersion()
+      });
+    }
+  });
+}
+
+/**
+ * viewport 变化频率很高，所以这里做 debounce 和去重；它帮助 agent 理解用户
+ * 当前关注区域，但不会单独打开 provider 调用。
+ */
+function scheduleViewportPublish(
+  editor: RoomContextEditor,
+  api: RoomContextRuntimeApi,
+  state: {
+    roomId: string;
+    debounceMs: number;
+    getSnapshotVersion: () => number;
+    getEventVersion: () => number;
+    getViewportTimer: () => number | undefined;
+    setViewportTimer: (timer: number | undefined) => void;
+    getPreviousViewportKey: () => string;
+    setPreviousViewportKey: (key: string) => void;
+  }
+) {
+  const key = createViewportKey(editor);
+  if (key === state.getPreviousViewportKey()) {
+    return;
+  }
+  state.setPreviousViewportKey(key);
+  const currentTimer = state.getViewportTimer();
+  if (currentTimer !== undefined) {
+    window.clearTimeout(currentTimer);
+  }
+  state.setViewportTimer(
+    window.setTimeout(() => {
+      state.setViewportTimer(undefined);
+      void api.emitViewportChange().then((result) => {
+        if (result.ok) {
+          dispatchRoomContextAutoEvent({
+            kind: "viewport-change",
+            roomId: state.roomId,
+            snapshotVersion: state.getSnapshotVersion(),
+            eventVersion: state.getEventVersion()
+          });
+        }
+      });
+    }, state.debounceMs)
+  );
+}
+
+/**
+ * 在浏览器内广播自动 context 事件。前端 AI Drop 只监听 canvas-change，
+ * selection/viewport 事件留给诊断或后续更细的 AI 感知使用。
+ */
+function dispatchRoomContextAutoEvent(detail: RoomContextAutoEventDetail) {
+  window.dispatchEvent(new CustomEvent(ROOM_CONTEXT_AUTO_EVENT, { detail }));
 }
 
 /**
@@ -453,6 +727,22 @@ function normalizeBounds(bounds: BoundsLike | null | undefined) {
         : 0;
 
   return { x, y, w, h };
+}
+
+function createViewportKey(editor: RoomContextEditor): string {
+  const bounds = normalizeBounds(editor.getViewportPageBounds()) ?? {
+    x: 0,
+    y: 0,
+    w: 0,
+    h: 0
+  };
+  return [
+    bounds.x,
+    bounds.y,
+    bounds.w,
+    bounds.h,
+    editor.getZoomLevel?.() ?? 1
+  ].join("|");
 }
 
 declare global {

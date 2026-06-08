@@ -37,9 +37,16 @@ and validates that the result includes canvas observations, inferred intent,
 freshness/staleness metadata, process-local memory diagnostics, and
 non-mutating output.
 
-## Mastra Scaffold
+## Mastra Canvas Agents
 
-The Mastra scaffold remains available for later model integration experiments.
+The Mastra app now exposes product-oriented canvas agents:
+
+- `mateConversationAgent`: normal conversation over the room context.
+- `aiDropCompletionAgent`: structured AI Drop completion proposals.
+
+The old weather demo files remain only as scaffold references. They are not the
+Production Spec Graph product agent path.
+
 Start the development server:
 
 ```shell
@@ -48,7 +55,22 @@ npm run dev
 
 Open [http://localhost:4111](http://localhost:4111) in your browser to access [Mastra Studio](https://mastra.ai/docs/studio/overview). It provides an interactive UI for building and testing your agents, along with a REST API that exposes your Mastra application as a local service. This lets you start building without worrying about integration right away.
 
-The default weather agent uses DeepSeek through Mastra's model router. Create a `.env` file from `.env.example` and set `DEEPSEEK_API_KEY` before calling the agent.
+The product canvas agents use DeepSeek through Mastra's model router when real
+agent mode is enabled. Create a `.env` file from `.env.example` and set
+`DEEPSEEK_API_KEY` before calling real provider-backed agents. Repository
+quality commands still default to the deterministic credential-free mate path.
+
+To route the web/server AI Gateway through the real Mastra runtime adapter, run
+the server with:
+
+```shell
+MATE_AGENT_MODE=real DEEPSEEK_API_KEY=... pnpm --filter @production-spec-graph/server dev
+```
+
+Successful provider-backed turns surface as `runtime.outputSource =
+"real-agent"` in room diagnostics. If credentials are missing or model output
+fails validation, mate falls back to deterministic output with a bounded runtime
+reason.
 
 You can start editing files inside the `src/mastra` directory. The development server will automatically reload whenever you make changes.
 

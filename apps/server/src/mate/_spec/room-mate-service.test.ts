@@ -295,17 +295,368 @@ describe("room mate service", () => {
       }
     });
   });
+
+  it("handles conversation through async fake runtime and records runtime metadata", async () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-08T00:00:05.000Z",
+      turnId: () => "turn:async-fake",
+      agentRuntime: {
+        config: {
+          mode: "fake",
+          provider: {
+            provider: "deepseek",
+            ready: false
+          }
+        },
+        async run(request) {
+          expect(request.promptPack.path).toBe("conversation");
+          return {
+            ok: true,
+            output: "Async fake answer from the conversation agent."
+          };
+        }
+      }
+    });
+
+    const result = await service.handleMessageAsync({
+      roomId: "alpha",
+      payload: {
+        message: "What is this board?",
+        source
+      },
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["Launch plan"],
+        eventKinds: ["chat-boundary"],
+        changedSinceSnapshot: false
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: {
+        mate: {
+          output: {
+            kind: "conversation-answer",
+            text: "Async fake answer from the conversation agent."
+          },
+          runtime: {
+            mode: "fake",
+            outputSource: "fake-agent",
+            status: "used",
+            fallbackUsed: false
+          }
+        }
+      }
+    });
+  });
+
+  it("creates stream-ready conversation events from async final response", async () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-08T00:00:05.000Z",
+      turnId: () => "turn:stream",
+      agentRuntime: {
+        config: {
+          mode: "fake",
+          provider: {
+            provider: "deepseek",
+            ready: false
+          }
+        },
+        async run() {
+          return {
+            ok: true,
+            output: "Streamed fake answer"
+          };
+        }
+      }
+    });
+
+    const result = await service.streamMessage({
+      roomId: "alpha",
+      payload: {
+        message: "Stream this",
+        source
+      },
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["Launch plan"],
+        eventKinds: ["chat-boundary"],
+        changedSinceSnapshot: false
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      events: [
+        {
+          kind: "started",
+          roomId: "alpha",
+          triggerKind: "conversation",
+          runtime: {
+            outputSource: "fake-agent"
+          }
+        },
+        {
+          kind: "delta",
+          roomId: "alpha",
+          text: "Streamed fake answer"
+        },
+        {
+          kind: "final",
+          roomId: "alpha",
+          response: {
+            mate: {
+              output: {
+                kind: "conversation-answer"
+              }
+            }
+          }
+        }
+      ]
+    });
+  });
+
+  it("falls back safely when real runtime mode lacks DeepSeek credentials", async () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-08T00:00:05.000Z",
+      turnId: () => "turn:real-fallback",
+      runtimeConfig: {
+        mode: "real",
+        provider: {
+          provider: "deepseek",
+          ready: false,
+          reason: "DEEPSEEK_API_KEY is required for real mate agent mode."
+        }
+      }
+    });
+
+    const result = await service.handleMessageAsync({
+      roomId: "alpha",
+      payload: {
+        message: "What is this board?",
+        source
+      },
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["Launch plan"],
+        eventKinds: ["chat-boundary"],
+        changedSinceSnapshot: false
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: {
+        mate: {
+          runtime: {
+            mode: "real",
+            outputSource: "deterministic-fallback",
+            status: "skipped",
+            fallbackUsed: true,
+            provider: {
+              provider: "deepseek",
+              ready: false
+            }
+          }
+        }
+      }
+    });
+  });
+
+  it("handles deterministic AI Drop text completion from completion gateway context", async () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-08T00:00:05.000Z",
+      turnId: () => "turn:completion"
+    });
+    const result = await service.handleCompletionAsync({
+      roomId: "alpha",
+      payload: makeCompletionPayload(),
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["User story: As a"],
+        eventKinds: ["canvas-change"],
+        eventSummaries: ["text edited in shape:1"],
+        changedSinceSnapshot: false
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: {
+        gateway: {
+          trigger: {
+            kind: "completion"
+          }
+        },
+        mate: {
+          output: {
+            kind: "completion-proposal",
+            proposal: {
+              previewOnly: true,
+              requiresAcceptance: true,
+              completion: {
+                kind: "text-in-element",
+                shapeId: "shape:1"
+              }
+            }
+          },
+          runtime: {
+            path: "completion",
+            outputSource: "deterministic-fallback"
+          }
+        }
+      }
+    });
+  });
+
+  it("handles fake runtime structured completion proposals", async () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-08T00:00:05.000Z",
+      turnId: () => "turn:fake-completion",
+      agentRuntime: {
+        config: {
+          mode: "fake",
+          provider: { provider: "deepseek", ready: false }
+        },
+        async run(request) {
+          expect(request.promptPack.path).toBe("completion");
+          return {
+            ok: true,
+            toolCalls: [
+              {
+                toolName: "propose-completion",
+                status: "called",
+                outputKind: "completion-proposal",
+                previewOnly: true
+              }
+            ],
+            output: {
+              schemaVersion: "agent-output.v1",
+              kind: "completion-proposal",
+              outputId: "fake-completion-output",
+              roomId: request.roomId,
+              createdAt: "2026-06-08T00:00:05.000Z",
+              basedOn: request.fallback.basedOn,
+              nonMutating: true,
+              proposal: {
+                proposalId: "fake-completion-proposal",
+                status: "pending",
+                previewOnly: true,
+                requiresAcceptance: true,
+                applied: false,
+                completion: {
+                  kind: "text-in-element",
+                  shapeId: "shape:1",
+                  currentText: "User story: As a",
+                  proposedText: "User story: As a buyer, I want a receipt"
+                },
+                rationale: "Fake runtime returned structured AI Drop output."
+              }
+            }
+          };
+        }
+      }
+    });
+
+    const result = await service.handleCompletionAsync({
+      roomId: "alpha",
+      payload: makeCompletionPayload(),
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["User story: As a"],
+        eventKinds: ["canvas-change"],
+        eventSummaries: ["text edited in shape:1"],
+        changedSinceSnapshot: false
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: {
+        mate: {
+          output: {
+            kind: "completion-proposal",
+            outputId: "fake-completion-output"
+          },
+          runtime: {
+            mode: "fake",
+            path: "completion",
+            outputSource: "fake-agent",
+            fallbackUsed: false,
+            toolCallCount: 1,
+            toolCalls: [
+              {
+                toolName: "propose-completion",
+                status: "called",
+                outputKind: "completion-proposal",
+                previewOnly: true
+              }
+            ]
+          }
+        }
+      }
+    });
+  });
+
+  it("falls back safely when completion runtime returns plain text", async () => {
+    const service = createRoomMateService({
+      now: () => "2026-06-08T00:00:05.000Z",
+      turnId: () => "turn:bad-completion",
+      agentRuntime: {
+        config: {
+          mode: "fake",
+          provider: { provider: "deepseek", ready: false }
+        },
+        async run() {
+          return {
+            ok: true,
+            output: "Plain text cannot become AI Drop preview."
+          };
+        }
+      }
+    });
+
+    const result = await service.handleCompletionAsync({
+      roomId: "alpha",
+      payload: makeCompletionPayload(),
+      context: makeRoomContextFeed({
+        roomId: "alpha",
+        shapeTexts: ["User story: As a"],
+        eventKinds: [],
+        changedSinceSnapshot: false
+      })
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      response: {
+        mate: {
+          output: {
+            kind: "question"
+          },
+          runtime: {
+            outputSource: "deterministic-fallback",
+            status: "failed",
+            reason: "plain-text-not-supported-for-completion"
+          }
+        }
+      }
+    });
+  });
 });
 
 function makeRoomContextFeed({
   roomId,
   shapeTexts = ["Launch plan"],
   eventKinds = ["canvas-change"],
+  eventSummaries,
   changedSinceSnapshot
 }: {
   roomId: string;
   shapeTexts?: string[];
   eventKinds?: Array<"canvas-change" | "selection-change" | "chat-boundary">;
+  eventSummaries?: string[];
   changedSinceSnapshot?: boolean;
 }): RoomContextFeed {
   const eventVersion = changedSinceSnapshot ? eventKinds.length + 1 : eventKinds.length;
@@ -349,7 +700,7 @@ function makeRoomContextFeed({
       },
       occurredAt: "2026-06-03T00:00:02.000Z",
       ...(kind === "canvas-change"
-        ? { affectedShapeIds: ["shape:1"], summary: "fixture change" }
+        ? { affectedShapeIds: ["shape:1"], summary: eventSummaries?.[index] ?? "fixture change" }
         : kind === "selection-change"
           ? { selectedShapeIds: ["shape:1"] }
           : { messageLength: 24 })
@@ -361,4 +712,25 @@ function makeRoomContextFeed({
     },
     generatedAt: "2026-06-03T00:00:03.000Z"
   });
+}
+
+function makeCompletionPayload() {
+  return {
+    selection: {
+      state: "selected",
+      selectedShapeIds: ["shape:1"]
+    },
+    viewport: {
+      state: "available",
+      pageBounds: { x: 0, y: 0, w: 800, h: 600 },
+      zoom: 1
+    },
+    source: {
+      kind: "web",
+      deviceId: "device:alpha",
+      sessionId: "device:alpha:tab:one",
+      tabId: "tab:one",
+      capturedAt: "2026-06-08T00:00:04.000Z"
+    }
+  };
 }

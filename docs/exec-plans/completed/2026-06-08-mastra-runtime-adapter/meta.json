@@ -1,0 +1,24 @@
+{
+  "id": "2026-06-08-mastra-runtime-adapter",
+  "status": "completed",
+  "task": "打通 MATE_AGENT_MODE=real + DEEPSEEK_API_KEY 下的真实 Mastra canvas agent runtime adapter，并接入 server 默认 mate 链路。",
+  "created_at": "2026-06-08T10:05:00Z",
+  "updated_at": "2026-06-08T10:09:00Z",
+  "spec_features": [
+    {
+      "id": "F1",
+      "name": "Provider-Backed Mastra Runtime Adapter",
+      "status": "completed",
+      "priority": "P0"
+    }
+  ],
+  "current_sprint": null,
+  "sprint_history": [
+    {
+      "number": 1,
+      "feature_id": "F1",
+      "rounds": 1,
+      "verdict": "passed"
+    }
+  ]
+}

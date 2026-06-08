@@ -1,5 +1,6 @@
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
+import { createConfiguredMastraMateAgentRuntimeAdapter } from "mate/runtime";
 
 import { isOriginAllowed, type ServerConfig } from "../config.js";
 import {
@@ -53,7 +54,11 @@ export async function createServerApp({
   config,
   registry = createRoomRegistry(),
   contextStore = createRoomContextStore(),
-  mateService = createRoomMateService(),
+  mateService = createRoomMateService({
+    // 真实 provider 只在 MATE_AGENT_MODE=real 且 DeepSeek ready 时注入；
+    // 默认本地/测试仍保持 deterministic fallback，不触网。
+    agentRuntime: createConfiguredMastraMateAgentRuntimeAdapter()
+  }),
   logger = false
 }: CreateServerAppOptions): Promise<ServerApp> {
   const app = Fastify({ logger });
@@ -100,6 +105,10 @@ export async function createServerApp({
   );
 
   app.options("/rooms/:roomId/mate/messages", async (_request, reply) =>
+    reply.code(204).send()
+  );
+
+  app.options("/rooms/:roomId/mate/completions", async (_request, reply) =>
     reply.code(204).send()
   );
 
@@ -209,7 +218,30 @@ export async function createServerApp({
     const agent = getAgentContext(registry, room.roomId);
     // mate 每次响应读取的是 context store 当前 feed：最新 snapshot + 有界 recent
     // events + freshness，而不是直接访问前端 editor 或 tldraw sync room。
-    const result = mateService.handleMessage({
+    const result = await mateService.handleMessageAsync({
+      roomId: room.roomId,
+      payload: request.body,
+      context: contextStore.getFeed(
+        room.roomId,
+        getAgentContext(registry, room.roomId)
+      ),
+      ...(agent ? { agent } : {})
+    });
+    return reply.code(result.ok ? 200 : 400).send(result);
+  });
+
+  app.post<{
+    Params: SyncRouteParams;
+  }>("/rooms/:roomId/mate/completions", async (request, reply) => {
+    const room = ensureRoomForContext(request.params.roomId, registry);
+    if (!room.ok) {
+      return reply.code(400).send(room);
+    }
+
+    const agent = getAgentContext(registry, room.roomId);
+    // AI Drop 补全和普通 conversation 分开路由：server 仍读取 room context feed，
+    // 前端只补充 live selection/viewport 这类候选时刻的运行时事实。
+    const result = await mateService.handleCompletionAsync({
       roomId: room.roomId,
       payload: request.body,
       context: contextStore.getFeed(

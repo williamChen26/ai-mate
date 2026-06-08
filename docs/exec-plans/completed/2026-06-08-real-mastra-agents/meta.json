@@ -1,0 +1,72 @@
+{
+  "id": "2026-06-08-real-mastra-agents",
+  "status": "completed",
+  "task": "接入真正的 Mastra/DeepSeek canvas agents：conversation 走主流流式对话，AI Drop 走结构化补全输出，同时保留当前 deterministic fallback、安全边界和质量门。",
+  "created_at": "2026-06-08T00:00:00Z",
+  "updated_at": "2026-06-08T09:56:00Z",
+  "spec_features": [
+    {
+      "id": "F1",
+      "name": "Real Agent Runtime Boundary and Mastra Canvas Agent Scaffold",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F2",
+      "name": "Canvas Context Prompt Pack and Agent Output Validation",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F3",
+      "name": "Conversation Agent Streaming Path",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F4",
+      "name": "AI Drop Completion Agent Structured Path",
+      "status": "completed",
+      "priority": "P0"
+    },
+    {
+      "id": "F5",
+      "name": "ReAct Tooling and Agent Diagnostics",
+      "status": "completed",
+      "priority": "P1"
+    }
+  ],
+  "current_sprint": null,
+  "sprint_history": [
+    {
+      "number": 1,
+      "feature_id": "F1",
+      "rounds": 1,
+      "verdict": "passed"
+    },
+    {
+      "number": 2,
+      "feature_id": "F2",
+      "rounds": 1,
+      "verdict": "passed"
+    },
+    {
+      "number": 3,
+      "feature_id": "F3",
+      "rounds": 1,
+      "verdict": "passed"
+    },
+    {
+      "number": 4,
+      "feature_id": "F4",
+      "rounds": 1,
+      "verdict": "passed"
+    },
+    {
+      "number": 5,
+      "feature_id": "F5",
+      "rounds": 1,
+      "verdict": "passed"
+    }
+  ]
+}

@@ -95,6 +95,28 @@ export type RoomDiagnosticsGatewaySummary = {
     }>;
     finalOutputKind: string;
   };
+  runtime: {
+    mode: string;
+    path: string;
+    agentId: string;
+    outputSource: string;
+    status: string;
+    fallbackUsed: boolean;
+    provider?: {
+      provider: string;
+      ready: boolean;
+      reason?: string;
+    };
+    toolCallCount: number;
+    toolCalls: Array<{
+      toolName: string;
+      status: string;
+      outputKind?: string;
+      previewOnly?: boolean;
+      reason?: string;
+    }>;
+    reason?: string;
+  } | null;
   outputKind: string;
   outputValidation: {
     status: RoomMateOutputValidation["status"];
@@ -255,6 +277,7 @@ function createGatewaySummary(
       })),
       finalOutputKind: response.mate.agentTurn.finalOutputKind
     },
+    runtime: summarizeRuntime(response.mate.runtime),
     outputKind: response.mate.output.kind,
     outputValidation: {
       status: outputValidation.status,
@@ -267,6 +290,38 @@ function createGatewaySummary(
       durable: false,
       recentOperationCount: recentOperations.operations.length
     }
+  };
+}
+
+function summarizeRuntime(
+  runtime: RoomMateResponse["mate"]["runtime"]
+): RoomDiagnosticsGatewaySummary["runtime"] {
+  const provider = runtime.provider
+    ? {
+        provider: runtime.provider.provider,
+        ready: runtime.provider.ready,
+        ...(runtime.provider.reason ? { reason: runtime.provider.reason } : {})
+      }
+    : null;
+  return {
+    mode: runtime.mode,
+    path: runtime.path,
+    agentId: runtime.agentId,
+    outputSource: runtime.outputSource,
+    status: runtime.status,
+    fallbackUsed: runtime.fallbackUsed,
+    ...(provider ? { provider } : {}),
+    toolCallCount: runtime.toolCallCount,
+    toolCalls: runtime.toolCalls.map((toolCall) => ({
+      toolName: toolCall.toolName,
+      status: toolCall.status,
+      ...(toolCall.outputKind ? { outputKind: toolCall.outputKind } : {}),
+      ...(toolCall.previewOnly === undefined
+        ? {}
+        : { previewOnly: toolCall.previewOnly }),
+      ...(toolCall.reason ? { reason: toolCall.reason } : {})
+    })),
+    ...(runtime.reason ? { reason: runtime.reason } : {})
   };
 }
 
@@ -307,6 +362,7 @@ function createFailureGatewaySummary(
       toolCalls: [],
       finalOutputKind: "invalid"
     },
+    runtime: null,
     outputKind: "invalid",
     outputValidation: {
       status: outputValidation.status,

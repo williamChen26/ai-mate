@@ -508,6 +508,14 @@ describe("server app", () => {
             agentTurn: {
               finalOutputKind: expect.any(String)
             },
+            runtime: {
+              mode: "deterministic",
+              outputSource: "deterministic-fallback",
+              status: "used",
+              fallbackUsed: true,
+              toolCallCount: 0,
+              toolCalls: []
+            },
             outputKind: "canvas-action-proposal",
             outputValidation: {
               status: "blocked",
@@ -548,11 +556,147 @@ describe("server app", () => {
     await app.close();
   });
 
+  it("routes AI Drop completion requests through the completion gateway", async () => {
+    const { app } = await createServerApp({
+      config: loadServerConfig({}),
+      logger: false
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/snapshot",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-08T00:00:00.000Z"
+        },
+        document: {
+          shapeCount: 1,
+          shapes: [
+            {
+              id: "shape:1",
+              type: "text",
+              text: "User story: As a",
+              bounds: { x: 0, y: 0, w: 160, h: 48 }
+            }
+          ]
+        },
+        selection: { selectedShapeIds: ["shape:1"] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 1, eventVersionAtSnapshot: 0 }
+      }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/events",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        eventId: "event:1",
+        eventVersion: 1,
+        kind: "canvas-change",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-08T00:00:01.000Z"
+        },
+        occurredAt: "2026-06-08T00:00:02.000Z",
+        affectedShapeIds: ["shape:1"],
+        summary: "text edited in shape:1"
+      }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/context/snapshot",
+      payload: {
+        schemaVersion: CANVAS_CONTEXT_SCHEMA_VERSION,
+        roomId: "alpha",
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-08T00:00:02.500Z"
+        },
+        document: {
+          shapeCount: 1,
+          shapes: [
+            {
+              id: "shape:1",
+              type: "text",
+              text: "User story: As a",
+              bounds: { x: 0, y: 0, w: 160, h: 48 }
+            }
+          ]
+        },
+        selection: { selectedShapeIds: ["shape:1"] },
+        viewport: { pageBounds: { x: 0, y: 0, w: 800, h: 600 }, zoom: 1 },
+        freshness: { snapshotVersion: 2, eventVersionAtSnapshot: 1 }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/rooms/alpha/mate/completions",
+      payload: {
+        selection: {
+          state: "selected",
+          selectedShapeIds: ["shape:1"]
+        },
+        viewport: {
+          state: "available",
+          pageBounds: { x: 0, y: 0, w: 800, h: 600 },
+          zoom: 1
+        },
+        source: {
+          kind: "web",
+          deviceId: "device:alpha",
+          sessionId: "device:alpha:tab:one",
+          tabId: "tab:one",
+          capturedAt: "2026-06-08T00:00:03.000Z"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      response: {
+        gateway: {
+          trigger: { kind: "completion" }
+        },
+        mate: {
+          output: {
+            kind: "completion-proposal",
+            proposal: {
+              completion: {
+                kind: "text-in-element",
+                shapeId: "shape:1"
+              }
+            }
+          },
+          runtime: {
+            path: "completion"
+          }
+        }
+      }
+    });
+
+    await app.close();
+  });
+
   it("keeps bounded diagnostics for malformed mate outputs", async () => {
     const { app } = await createServerApp({
       config: loadServerConfig({}),
       mateService: createRoomMateService({
-        prepareTurn: () => ({
+        prepareTurnAsync: async () => ({
           roomId: "alpha",
           output: {
             kind: "canvas-action-proposal",

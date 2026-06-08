@@ -46,8 +46,10 @@ import {
 } from "@/lib/collaborator-identity";
 import { buildRoomShareUrl } from "@/lib/room-share";
 import {
+  ROOM_CONTEXT_AUTO_EVENT,
   createContextBaseUrlFromRoomUri,
-  registerRoomContextRuntime
+  registerRoomContextRuntime,
+  type RoomContextAutoEventDetail
 } from "@/lib/room-context";
 import { createRoomMateClient } from "@/lib/mate-client";
 import { createRoomDiagnosticsClient } from "@/lib/room-diagnostics-client";
@@ -219,7 +221,9 @@ function SyncedCanvasShell({
             return registerMountedRoomContext(mountedEditor, collaboration);
           }}
         />
-        {editor ? <AiDropRuntime editor={editor} /> : null}
+        {editor ? (
+          <AiDropRuntime editor={editor} collaboration={collaboration} />
+        ) : null}
       </div>
       <MateRawPanel collaboration={collaboration} />
     </CanvasShellFrame>
@@ -439,11 +443,18 @@ function ConversationGatewayResult({
  * AI Drop 的最小浏览器运行时。它负责把 completion-proposal 变成透明预览，并把
  * Tab 接受动作收束到受控 tldraw apply boundary。
  */
-function AiDropRuntime({ editor }: { editor: Editor }) {
+function AiDropRuntime({
+  editor,
+  collaboration
+}: {
+  editor: Editor;
+  collaboration: Extract<CollaborationState, { ok: true }>;
+}) {
   const [proposalState, setProposalState] = useState<AiDropProposalState>(
     clearAiDropProposal("initial")
   );
   const proposalStateRef = useRef(proposalState);
+  const lastAcceptedAtRef = useRef(0);
 
   useEffect(() => {
     proposalStateRef.current = proposalState;
@@ -465,13 +476,55 @@ function AiDropRuntime({ editor }: { editor: Editor }) {
     };
   };
 
-  const activate = (output: unknown) => {
-    const context = readContext();
+  const aiClient = useMemo(
+    () =>
+      createRoomMateClient({
+        baseUrl: createContextBaseUrlFromRoomUri(collaboration.roomUri),
+        roomId: collaboration.roomId,
+        source: {
+          deviceId: collaboration.deviceId,
+          sessionId: collaboration.sessionId,
+          tabId: collaboration.tabId
+        }
+      }),
+    [collaboration]
+  );
+
+  const activate = (output: unknown, contextOverride?: AiDropRuntimeContext) => {
+    const context = contextOverride ?? readContext();
     const next = context
       ? activateAiDropProposal(output, context)
       : ({ status: "refused", reason: "missing-runtime-context" } as const);
     setProposalState(next);
     return next;
+  };
+
+  const requestServerCompletion = async () => {
+    const publishResult = await window.__PSG_ROOM_CONTEXT__?.publishSnapshot();
+    const snapshot = publishResult?.ok ? publishResult.snapshot : undefined;
+    if (!snapshot) {
+      const next = { status: "refused", reason: "missing-runtime-context" } as const;
+      setProposalState(next);
+      return next;
+    }
+
+    const result = await aiClient.requestCompletion(snapshot);
+    if (!result.ok) {
+      const next = { status: "failed", reason: result.error } as const;
+      setProposalState(next);
+      return next;
+    }
+
+    const output = readMateOutput(result.value);
+    return activate(output, {
+      snapshot,
+      freshness: {
+        snapshotVersion: snapshot.freshness.snapshotVersion,
+        eventVersion: snapshot.freshness.eventVersionAtSnapshot,
+        changedSinceSnapshot: false,
+        stale: false
+      }
+    });
   };
 
   const accept = async () => {
@@ -490,6 +543,7 @@ function AiDropRuntime({ editor }: { editor: Editor }) {
     setProposalState(next);
 
     if (next.status === "applied") {
+      lastAcceptedAtRef.current = Date.now();
       await window.__PSG_ROOM_CONTEXT__?.emitCanvasChange({
         affectedShapeIds: next.appliedShapeIds,
         summary: "ai-drop accepted proposal"
@@ -503,6 +557,7 @@ function AiDropRuntime({ editor }: { editor: Editor }) {
   useEffect(() => {
     const api: AiDropRuntimeApi = {
       activate,
+      requestServerCompletion,
       activateTextCompletion(input = {}) {
         const context = readContext();
         const output = context
@@ -568,6 +623,37 @@ function AiDropRuntime({ editor }: { editor: Editor }) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  useEffect(() => {
+    let requestInFlight = false;
+
+    /**
+     * 接收 room-context 自动发布后的作者行为信号。只有 canvas-change 会触发
+     * server completion；selection/viewport 只是上下文，不会自己打开补全。
+     */
+    function onAutoContextEvent(event: Event) {
+      const detail = (event as CustomEvent<RoomContextAutoEventDetail>).detail;
+      if (detail?.kind !== "canvas-change") {
+        return;
+      }
+      if (
+        requestInFlight ||
+        Date.now() - lastAcceptedAtRef.current < 1_000 ||
+        proposalStateRef.current.status === "active" ||
+        proposalStateRef.current.status === "applying"
+      ) {
+        return;
+      }
+      requestInFlight = true;
+      void requestServerCompletion().finally(() => {
+        requestInFlight = false;
+      });
+    }
+
+    window.addEventListener(ROOM_CONTEXT_AUTO_EVENT, onAutoContextEvent);
+    return () =>
+      window.removeEventListener(ROOM_CONTEXT_AUTO_EVENT, onAutoContextEvent);
   });
 
   useEffect(() => {
@@ -984,6 +1070,7 @@ function useClientReady() {
 
 type AiDropRuntimeApi = {
   activate: (output: unknown) => AiDropProposalState;
+  requestServerCompletion: () => Promise<AiDropProposalState>;
   activateTextCompletion: (input?: { text?: string }) => AiDropProposalState;
   activateFlowContinuation: (input?: { text?: string }) => AiDropProposalState;
   accept: () => Promise<AiDropProposalState>;
@@ -991,6 +1078,21 @@ type AiDropRuntimeApi = {
   getState: () => AiDropProposalState;
   getDiagnostics: () => AiDropDiagnostics;
 };
+
+function readMateOutput(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const response = (value as { response?: unknown }).response;
+  if (!response || typeof response !== "object") {
+    return value;
+  }
+  const mate = (response as { mate?: unknown }).mate;
+  if (!mate || typeof mate !== "object") {
+    return value;
+  }
+  return (mate as { output?: unknown }).output ?? value;
+}
 
 declare global {
   interface Window {

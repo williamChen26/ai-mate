@@ -14,6 +14,17 @@ import {
   type AgentTurnPlan
 } from "./agent-turn.js";
 import {
+  createDeterministicRuntimeMetadata,
+  createMateAgentRuntimeConfig,
+  createSkippedRuntimeMetadata,
+  mateAgentRuntimeMetadataSchema,
+  normalizeRuntimeAdapterResult,
+  selectMateAgentPath,
+  type MateAgentRuntimeAdapter,
+  type MateAgentRuntimeConfig
+} from "./agent-runtime.js";
+import { createCanvasAgentPromptPack } from "./canvas-agent-prompt.js";
+import {
   createRoomMemoryStore,
   type RoomMemoryDiagnostics,
   type RoomMemoryStore
@@ -71,6 +82,7 @@ export const mateTurnResultSchema = z.object({
   agentTurn: agentTurnPlanSchema,
   uncertainty: z.array(z.string()),
   output: agentOutputSchema,
+  runtime: mateAgentRuntimeMetadataSchema,
   memory: z.object({
     retainedTurnCount: z.number().int().nonnegative(),
     maxTurnsPerRoom: z.number().int().positive(),
@@ -88,6 +100,11 @@ export type PrepareMateTurnOptions = {
   memoryStore?: RoomMemoryStore;
   now?: () => string;
   turnId?: () => string;
+};
+
+export type PrepareMateTurnWithRuntimeOptions = PrepareMateTurnOptions & {
+  agentRuntime?: MateAgentRuntimeAdapter;
+  runtimeConfig?: MateAgentRuntimeConfig;
 };
 
 /**
@@ -132,6 +149,7 @@ export function prepareMateTurn(
     generatedAt,
     `${id}:output`
   );
+  const selectedRuntime = selectMateAgentPath(request.gateway);
 
   memoryStore.recordTurn(request.roomId, {
     turnId: id,
@@ -151,7 +169,90 @@ export function prepareMateTurn(
     agentTurn,
     uncertainty,
     output,
+    runtime: createDeterministicRuntimeMetadata({
+      ...selectedRuntime,
+      reason: "Deterministic mate fallback is the default credential-free path."
+    }),
     memory
+  });
+}
+
+/**
+ * 真实/假 agent 的异步入口。当前 server 仍可继续使用同步 `prepareMateTurn`；
+ * 后续接 DeepSeek、流式 conversation 或结构化 AI Drop 时，从这里进入模型运行时。
+ */
+export async function prepareMateTurnWithRuntime(
+  input: MateTurnRequest,
+  options: PrepareMateTurnWithRuntimeOptions = {}
+): Promise<MateTurnResult> {
+  const request = mateTurnRequestSchema.parse(input);
+  const fallback = prepareMateTurn(request, options);
+  const selectedRuntime = selectMateAgentPath(request.gateway);
+  const config =
+    options.agentRuntime?.config ??
+    options.runtimeConfig ??
+    createMateAgentRuntimeConfig();
+
+  if (config.mode === "deterministic") {
+    return fallback;
+  }
+
+  if (config.mode === "real" && !config.provider.ready) {
+    return withRuntimeMetadata(
+      fallback,
+      createSkippedRuntimeMetadata({
+        config,
+        ...selectedRuntime,
+        reason:
+          config.provider.reason ??
+          "Real mate agent mode is unavailable because the provider is not ready."
+      })
+    );
+  }
+
+  if (!options.agentRuntime) {
+    return withRuntimeMetadata(
+      fallback,
+      createSkippedRuntimeMetadata({
+        config,
+        ...selectedRuntime,
+        reason: "No mate agent runtime adapter was provided."
+      })
+    );
+  }
+
+  const runtimeResult = await options.agentRuntime.run({
+    ...selectedRuntime,
+    roomId: request.roomId,
+    ...(request.userMessage ? { userMessage: request.userMessage } : {}),
+    ...(request.gateway ? { gateway: request.gateway } : {}),
+    context: request.context,
+    promptPack: createCanvasAgentPromptPack({
+      ...(request.gateway ? { gateway: request.gateway } : {}),
+      context: request.context,
+      ...(request.userMessage ? { userMessage: request.userMessage } : {})
+    }),
+    fallback
+  });
+  const normalized = normalizeRuntimeAdapterResult({
+    config,
+    ...selectedRuntime,
+    result: runtimeResult,
+    roomId: request.roomId,
+    outputId: `${fallback.turnId}:runtime-output`,
+    createdAt: fallback.generatedAt,
+    basedOn: fallback.basedOn
+  });
+
+  if (!normalized.ok) {
+    return withRuntimeMetadata(fallback, normalized.runtime);
+  }
+
+  return mateTurnResultSchema.parse({
+    ...fallback,
+    ...(normalized.agentTurn ? { agentTurn: normalized.agentTurn } : {}),
+    output: normalized.output,
+    runtime: normalized.runtime
   });
 }
 
@@ -464,4 +565,14 @@ export function getMemoryDiagnostics(
   roomId: string
 ): RoomMemoryDiagnostics {
   return memoryStore.getDiagnostics(roomId);
+}
+
+function withRuntimeMetadata(
+  result: MateTurnResult,
+  runtime: MateTurnResult["runtime"]
+): MateTurnResult {
+  return mateTurnResultSchema.parse({
+    ...result,
+    runtime
+  });
 }

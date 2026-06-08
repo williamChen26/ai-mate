@@ -297,6 +297,8 @@ test("previews and accepts an AI Drop text completion with Tab", async ({
     preview: { active: true },
     safety: { previewOnly: true, hiddenCanvasMutation: false }
   });
+  await page.waitForTimeout(400);
+  await expect(page.getByTestId("ai-drop-preview")).toBeVisible();
   await expect.poll(() => readContextShapeCount(page)).toBe(beforeCount);
 
   await page.keyboard.press("Tab");
